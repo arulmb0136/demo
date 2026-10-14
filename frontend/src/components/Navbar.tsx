@@ -2,9 +2,14 @@ import React from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { ThemeSelector } from './ThemeSelector';
-import { Shield, Layers, User as UserIcon, LogOut, FileText, Settings } from 'lucide-react';
+import { NotificationCenter } from './NotificationCenter';
+import { Shield, User as UserIcon, LogOut, FileText, Settings } from 'lucide-react';
 
-export const Navbar: React.FC = () => {
+interface NavbarProps {
+  onSelectContract?: (recordId: string) => void;
+}
+
+export const Navbar: React.FC<NavbarProps> = ({ onSelectContract }) => {
   const { user, isAuthenticated, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -49,7 +54,7 @@ export const Navbar: React.FC = () => {
               Ironclad Hub
             </div>
             <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 600 }}>
-              Enterprise CLM & BI
+              Live Contract Engine
             </div>
           </div>
         </Link>
@@ -91,7 +96,7 @@ export const Navbar: React.FC = () => {
           )}
 
           {/* Conditional Admin Only Link */}
-          {isAuthenticated && user?.role === 'admin' && (
+          {isAuthenticated && (user?.role === 'admin' || user?.permissions?.includes('users:manage') || user?.permissions?.includes('admin')) && (
             <Link
               to="/admin/roles"
               style={{
@@ -107,13 +112,18 @@ export const Navbar: React.FC = () => {
               }}
             >
               <Settings size={16} />
-              RBAC Matrix
+              User &amp; Role Management
             </Link>
           )}
         </nav>
 
-        {/* Right Section: Theme Selector + Auth Profile */}
+        {/* Right Section: Notification Center + Theme Selector + Auth Profile */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
+          {/* Post-login live notifications */}
+          {isAuthenticated && (
+            <NotificationCenter onSelectContract={onSelectContract} />
+          )}
+
           <ThemeSelector />
 
           {isAuthenticated && user ? (

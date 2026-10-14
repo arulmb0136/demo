@@ -9,6 +9,7 @@ def health_check():
         "status": "healthy",
         "app_name": settings.APP_NAME,
         "environment": settings.ENVIRONMENT,
-        "data_source": settings.DATA_SOURCE,
-        "version": "1.0.0"
+        "data_source": "live_ironclad_api",
+        "ironclad_base_url": settings.IRONCLAD_API_BASE_URL,
+        "version": "2.0.0"
     }

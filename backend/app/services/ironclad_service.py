@@ -1,133 +1,322 @@
-from typing import List, Dict, Any, Optional
-import httpx
-import uuid
+import time
+from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime, timedelta
+import httpx
 from app.core.config import settings
 from app.core.logging import logger
 
+ALLOWED_RECORD_TYPES = {
+    "Property Service Contract",
+    "Purchase & Sales Agreement",
+    "General Services Agreement"
+}
+
+ALLOWED_RECORD_TYPES_PARAM = "Property Service Contract,Purchase & Sales Agreement,General Services Agreement"
+
+class IroncladTokenManager:
+    """
+    Manages OAuth2 Client Credentials token lifecycle per Ironclad specification.
+    Calls POST /oauth/token with scopes:
+      public.records.readRecords public.records.readAttachments
+    Client Credentials tokens are valid for up to 6 hours (21600 seconds).
+    When expired, a new token is requested automatically.
+    """
+    def __init__(self, token_url: str, client_id: str, client_secret: str):
+        self.token_url = token_url
+        self.client_id = client_id
+        self.client_secret = client_secret
+        self.access_token: Optional[str] = None
+        self.expires_at: float = 0.0
+
+    def has_credentials(self) -> bool:
+        return bool(self.client_id and self.client_secret)
+
+    def is_expired(self) -> bool:
+        # Renew token if within 90 seconds of expiry
+        return not self.access_token or time.time() >= (self.expires_at - 90)
+
+    async def get_valid_token(self) -> str:
+        if not self.has_credentials():
+            raise ValueError(
+                "Ironclad Client ID and Client Secret are not configured. "
+                "Please configure IRONCLAD_CLIENT_ID and IRONCLAD_CLIENT_SECRET in backend/.env"
+            )
+
+        if not self.is_expired() and self.access_token:
+            return self.access_token
+
+        await self._acquire_token()
+        if not self.access_token:
+            raise RuntimeError("Failed to acquire access token from Ironclad OAuth endpoint.")
+        return self.access_token
+
+    async def _acquire_token(self) -> bool:
+        logger.info(f"Requesting Client Credentials token from Ironclad: {self.token_url}")
+        payload = {
+            "grant_type": "client_credentials",
+            "client_id": self.client_id,
+            "client_secret": self.client_secret,
+            "scope": "public.records.readRecords public.records.readAttachments"
+        }
+        headers = {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Accept": "application/json"
+        }
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            res = await client.post(self.token_url, data=payload, headers=headers)
+            if res.status_code == 200:
+                data = res.json()
+                self.access_token = data.get("access_token")
+                expires_in = data.get("expires_in", 21600)
+                self.expires_at = time.time() + float(expires_in)
+                logger.info(f"Acquired Ironclad OAuth token (valid for {expires_in}s / {expires_in // 3600}h)")
+                return True
+            else:
+                logger.error(f"Ironclad Client Credentials grant failed: HTTP {res.status_code} - {res.text}")
+                raise RuntimeError(f"Ironclad authentication failure (HTTP {res.status_code}): {res.text}")
+
+
 class IroncladService:
-    """Client for Ironclad Public API (developer.ironcladapp.com)"""
+    """
+    Direct client for Ironclad Public REST API (developer.ironcladapp.com).
+    Integrates strictly with:
+      1. POST /oauth/token (Client Credentials Grant)
+      2. GET /records/ids (List All Record IDs filtered to the 3 allowed types)
+      3. GET /records/{id} (Retrieve a Record)
+      4. GET /records/{id}/attachments/{key} (Retrieve an Attachment on a Record)
+    """
     def __init__(self):
-        self.base_url = settings.IRONCLAD_API_BASE_URL.rstrip("/")
+        # Normalize base URL to ensure proper endpoint appending
+        raw_url = settings.IRONCLAD_API_BASE_URL.rstrip("/")
+        if not raw_url.endswith("/public/api/v1"):
+            self.api_root = f"{raw_url}/public/api/v1"
+        else:
+            self.api_root = raw_url
+
         self.client_id = settings.IRONCLAD_CLIENT_ID
         self.client_secret = settings.IRONCLAD_CLIENT_SECRET
-        self.bearer_token = settings.IRONCLAD_BEARER_TOKEN
-        self.demo_mode = settings.IRONCLAD_DEMO_MODE
+        self.as_user_email = settings.IRONCLAD_AS_USER_EMAIL
+        self.token_manager = IroncladTokenManager(
+            token_url=settings.IRONCLAD_TOKEN_URL,
+            client_id=self.client_id,
+            client_secret=self.client_secret
+        )
 
-    def _get_headers(self) -> Dict[str, str]:
-        token = self.bearer_token
-        return {
+    async def _get_auth_headers(self, user_email: Optional[str] = None) -> Dict[str, str]:
+        token = await self.token_manager.get_valid_token()
+        headers = {
             "Authorization": f"Bearer {token}",
             "Accept": "application/json",
-            "Content-Type": "application/json",
-            "X-Client-Id": self.client_id
+            "Content-Type": "application/json"
         }
+        # Send actor header per Ironclad Client Credentials specification
+        effective_email = user_email or self.as_user_email
+        if effective_email:
+            headers["x-as-user-email"] = effective_email
+        return headers
 
-    async def fetch_workflows(self) -> List[Dict[str, Any]]:
-        """Fetch active contract workflows from Ironclad API"""
-        if self.demo_mode or not self.client_id or self.client_id.startswith("ironclad_demo"):
-            logger.info("Using Ironclad Service Sandbox Mock Workflows (developer.ironcladapp.com schema)")
-            return self._get_mock_ironclad_workflows()
+    # -------------------------------------------------------------------------
+    # 1. List All Record IDs: GET /records/ids
+    # -------------------------------------------------------------------------
+    async def fetch_record_ids(self, search: Optional[str] = None, user_email: Optional[str] = None) -> List[str]:
+        """
+        Returns identifiers of records matching the 3 allowed types.
+        Endpoint: GET /records/ids
+        OAuth Scope: public.records.readRecords
+        """
+        if not self.token_manager.has_credentials():
+            logger.warning("Ironclad credentials not configured. Returning empty record list.")
+            return []
 
-        url = f"{self.base_url}/workflows"
-        logger.info(f"Querying Ironclad API: GET {url}")
+        endpoint = f"{self.api_root}/records/ids"
+        params: Dict[str, Any] = {
+            "pageSize": 10000,
+            "types": ALLOWED_RECORD_TYPES_PARAM,
+            "sortField": "agreementDate",
+            "sortDirection": "DESC"
+        }
+        if search:
+            params["search"] = search[:1000]
+
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.get(url, headers=self._get_headers())
-                if response.status_code == 200:
-                    data = response.json()
-                    return data.get("list", data) if isinstance(data, dict) else data
-                else:
-                    logger.warning(
-                        f"Ironclad API returned status {response.status_code}: {response.text}. "
-                        f"Falling back to sandbox mock data."
-                    )
-                    return self._get_mock_ironclad_workflows()
+            headers = await self._get_auth_headers(user_email=user_email)
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                res = await client.get(endpoint, params=params, headers=headers)
+                if res.status_code == 200:
+                    data = res.json()
+                    # Per OpenAPI definition, response echoes { page, pageSize, count, list: [ { id, ironcladId } ] }
+                    raw_items = data.get("list", data if isinstance(data, list) else [])
+                    ids = [
+                        item["id"] if isinstance(item, dict) and "id" in item else str(item)
+                        for item in raw_items
+                    ]
+                    logger.info(f"Retrieved {len(ids)} record IDs from Ironclad GET /records/ids")
+                    return ids
+                elif res.status_code == 401:
+                    logger.info("Access token expired during GET /records/ids. Re-authenticating...")
+                    self.token_manager.access_token = None
+                    headers = await self._get_auth_headers(user_email=user_email)
+                    retry_res = await client.get(endpoint, params=params, headers=headers)
+                    if retry_res.status_code == 200:
+                        retry_data = retry_res.json()
+                        raw_items = retry_data.get("list", retry_data if isinstance(retry_data, list) else [])
+                        return [item["id"] if isinstance(item, dict) and "id" in item else str(item) for item in raw_items]
+                logger.error(f"Ironclad GET /records/ids returned HTTP {res.status_code}: {res.text}")
+                return []
         except Exception as exc:
-            logger.error(f"Failed to connect to Ironclad API ({str(exc)}). Using sandbox fallback.", exc_info=True)
-            return self._get_mock_ironclad_workflows()
+            logger.error(f"Error connecting to Ironclad GET /records/ids: {exc}", exc_info=True)
+            return []
 
-    async def fetch_records(self, last_updated: Optional[datetime] = None) -> List[Dict[str, Any]]:
+    # -------------------------------------------------------------------------
+    # 2. Retrieve a Record: GET /records/{id}
+    # -------------------------------------------------------------------------
+    async def fetch_record_by_id(self, record_id: str, user_email: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """
-        Fetch signed/executed repository records from Ironclad API
-        Supports incremental data warehouse query: GET /records?lastUpdated=<ISO8601>
-        (per developer.ironcladapp.com/docs/data-lakedata-warehouse-integration)
+        Retrieves properties and attachments for a specific record.
+        Endpoint: GET /records/{id}
+        OAuth Scope: public.records.readRecords
         """
-        if self.demo_mode or not self.client_id or self.client_id.startswith("ironclad_demo"):
-            logger.info("Using Ironclad Service Sandbox Mock Records (developer.ironcladapp.com schema)")
-            return self._get_mock_ironclad_records()
+        if not self.token_manager.has_credentials():
+            return None
 
-        url = f"{self.base_url}/records"
-        params = {}
-        if last_updated:
-            params["lastUpdated"] = last_updated.isoformat()
-
+        endpoint = f"{self.api_root}/records/{record_id}"
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.get(url, params=params, headers=self._get_headers())
-                if response.status_code == 200:
-                    data = response.json()
-                    return data.get("list", data) if isinstance(data, dict) else data
-                return self._get_mock_ironclad_records()
-        except Exception:
-            return self._get_mock_ironclad_records()
+            headers = await self._get_auth_headers(user_email=user_email)
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                res = await client.get(endpoint, headers=headers)
+                if res.status_code == 200:
+                    return self.normalize_record(res.json())
+                elif res.status_code == 401:
+                    logger.info(f"Access token expired during GET /records/{record_id}. Re-authenticating...")
+                    self.token_manager.access_token = None
+                    headers = await self._get_auth_headers(user_email=user_email)
+                    retry_res = await client.get(endpoint, headers=headers)
+                    if retry_res.status_code == 200:
+                        return self.normalize_record(retry_res.json())
+                elif res.status_code == 404:
+                    logger.warning(f"Record '{record_id}' not found in Ironclad.")
+                    return None
+                logger.error(f"Ironclad GET /records/{record_id} returned HTTP {res.status_code}: {res.text}")
+                return None
+        except Exception as exc:
+            logger.error(f"Failed to fetch Ironclad record '{record_id}': {exc}", exc_info=True)
+            return None
 
-    async def create_record(self, record_payload: Dict[str, Any]) -> Dict[str, Any]:
+    # -------------------------------------------------------------------------
+    # 3. Retrieve All Allowed Whitelisted Records
+    # -------------------------------------------------------------------------
+    async def fetch_allowed_contracts(self, search: Optional[str] = None, user_email: Optional[str] = None) -> List[Dict[str, Any]]:
         """
-        Creates an Ironclad Record via POST /records following developer.ironcladapp.com/docs/create-a-record-1
+        Fetches record IDs from /records/ids and loads details for whitelisted types:
+        - Property Service Contract
+        - Purchase & Sales Agreement
+        - General Services Agreement
         """
-        now = datetime.utcnow()
-        if self.demo_mode or not self.client_id or self.client_id.startswith("ironclad_demo"):
-            new_id = f"rec_ic_{uuid.uuid4().hex[:10]}"
-            logger.info(f"Created sandbox Ironclad Record with ID {new_id} based on official API specification")
-            mock_res = {
-                "id": new_id,
-                "type": record_payload.get("type", "contract"),
-                "name": record_payload.get("name", "Untitled Record"),
-                "properties": record_payload.get("properties", {}),
-                "links": record_payload.get("links", []),
-                "lastUpdated": now.isoformat(),
-                "createdAt": now.isoformat(),
-                "updatedAt": now.isoformat()
-            }
-            return mock_res
+        record_ids = await self.fetch_record_ids(search=search, user_email=user_email)
+        allowed_contracts: List[Dict[str, Any]] = []
 
-        url = f"{self.base_url}/records"
+        for r_id in record_ids:
+            record = await self.fetch_record_by_id(r_id, user_email=user_email)
+            if record and record.get("record_type") in ALLOWED_RECORD_TYPES:
+                allowed_contracts.append(record)
+
+        allowed_contracts.sort(key=lambda x: x.get("last_synced_date") or "", reverse=True)
+        return allowed_contracts
+
+    # -------------------------------------------------------------------------
+    # 4. Retrieve an Attachment on a Record: GET /records/{id}/attachments/{key}
+    # -------------------------------------------------------------------------
+    async def get_attachment_stream(
+        self,
+        record_id: str,
+        attachment_key: str = "signedCopy",
+        user_email: Optional[str] = None
+    ) -> Tuple[Optional[bytes], str, str]:
+        """
+        Retrieves binary attachment associated with a specific record.
+        Endpoint: GET /records/{id}/attachments/{key}
+        OAuth Scope: public.records.readAttachments
+        """
+        clean_key = attachment_key or "signedCopy"
+        filename = clean_key.split("/")[-1] if "/" in clean_key else clean_key
+        if not filename.endswith(".pdf"):
+            filename = f"{filename}.pdf"
+        content_type = "application/pdf"
+
+        if not self.token_manager.has_credentials():
+            logger.error("Cannot retrieve attachment: Ironclad credentials not configured.")
+            return None, filename, content_type
+
+        endpoint = f"{self.api_root}/records/{record_id}/attachments/{attachment_key}"
         try:
-            async with httpx.AsyncClient(timeout=12.0) as client:
-                res = await client.post(url, json=record_payload, headers=self._get_headers())
-                if res.status_code in [200, 201]:
-                    return res.json()
-                else:
-                    logger.warning(f"Ironclad create_record returned {res.status_code}: {res.text}. Falling back to sandbox response.")
-                    new_id = f"rec_ic_{uuid.uuid4().hex[:10]}"
-                    return {"id": new_id, "lastUpdated": now.isoformat(), **record_payload}
-        except Exception as e:
-            logger.error(f"Error calling Ironclad create_record API ({e}). Falling back.", exc_info=True)
-            new_id = f"rec_ic_{uuid.uuid4().hex[:10]}"
-            return {"id": new_id, "lastUpdated": now.isoformat(), **record_payload}
+            headers = await self._get_auth_headers(user_email=user_email)
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                res = await client.get(endpoint, headers=headers)
+                if res.status_code == 200:
+                    ct = res.headers.get("content-type", content_type)
+                    return res.content, filename, ct
+                elif res.status_code == 401:
+                    logger.info("Access token expired during attachment retrieval. Re-authenticating...")
+                    self.token_manager.access_token = None
+                    headers = await self._get_auth_headers(user_email=user_email)
+                    retry_res = await client.get(endpoint, headers=headers)
+                    if retry_res.status_code == 200:
+                        ct = retry_res.headers.get("content-type", content_type)
+                        return retry_res.content, filename, ct
+                logger.error(f"Ironclad GET /records/{record_id}/attachments/{attachment_key} returned HTTP {res.status_code}: {res.text}")
+                return None, filename, content_type
+        except Exception as exc:
+            logger.error(f"Failed to retrieve attachment '{attachment_key}' on record '{record_id}': {exc}", exc_info=True)
+            return None, filename, content_type
 
-    def normalize_ironclad_data(self, raw_item: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Normalizes both Ironclad Workflows and Ironclad Records (developer.ironcladapp.com Data Lake & Records schema)
-        into a consistent data dictionary with full lifecycle and tracking dates.
-        """
-        now = datetime.utcnow()
+    # -------------------------------------------------------------------------
+    # 5. Check Notifications for Newly Arrived Agreements
+    # -------------------------------------------------------------------------
+    async def check_new_agreements(self, since_iso: Optional[str] = None, user_email: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Returns newly arrived agreements since given ISO timestamp for post-login notifications."""
+        all_contracts = await self.fetch_allowed_contracts(user_email=user_email)
+        if not since_iso:
+            cutoff = datetime.utcnow() - timedelta(hours=24)
+        else:
+            try:
+                clean_str = since_iso.replace("Z", "+00:00")
+                cutoff = datetime.fromisoformat(clean_str).replace(tzinfo=None)
+            except Exception:
+                cutoff = datetime.utcnow() - timedelta(hours=24)
+
+        new_items = []
+        for c in all_contracts:
+            sync_dt = None
+            if c.get("last_synced_date"):
+                try:
+                    sync_dt = datetime.fromisoformat(str(c["last_synced_date"]).replace("Z", "+00:00")).replace(tzinfo=None)
+                except Exception:
+                    pass
+            if sync_dt and sync_dt > cutoff:
+                new_items.append({
+                    "id": c["ironclad_id"],
+                    "title": c["title"],
+                    "record_type": c["record_type"],
+                    "counterparty_name": c["counterparty_name"],
+                    "contract_value": c["contract_value"],
+                    "status": c["status"],
+                    "arrived_at": c["last_synced_date"]
+                })
+        return new_items
+
+    # -------------------------------------------------------------------------
+    # Record Normalization
+    # -------------------------------------------------------------------------
+    def normalize_record(self, raw_item: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        if not raw_item:
+            return None
+
         ironclad_id = raw_item.get("id")
-        
-        # 1. Title / Name
-        title = raw_item.get("name") or raw_item.get("title") or "Untitled Agreement"
-        
-        # 2. Record Type & Template
-        record_type = raw_item.get("type") or "contract"
-        template_name = raw_item.get("template") or raw_item.get("type") or "Standard Agreement"
-        
-        # 3. Status
-        status_val = raw_item.get("step") or raw_item.get("status") or "draft"
-
-        # 4. Extract from nested properties (Record schema) or flat fields (Workflow schema)
+        record_type = raw_item.get("type") or raw_item.get("record_type") or "General Services Agreement"
+        title = raw_item.get("name") or raw_item.get("title") or f"{record_type} - {ironclad_id}"
+        status_val = raw_item.get("step") or raw_item.get("status") or "signed"
         properties = raw_item.get("properties", {})
-        
+
         def extract_prop(key: str, default: Any = None) -> Any:
             if key in properties:
                 prop_item = properties[key]
@@ -136,16 +325,10 @@ class IroncladService:
                 return prop_item
             return default
 
-        # Counterparty
-        counterparty = (
-            extract_prop("counterpartyName")
-            or raw_item.get("counterpartyName")
-            or "Unknown Counterparty"
-        )
+        counterparty = extract_prop("counterpartyName") or raw_item.get("counterparty_name") or "Counterparty"
         if isinstance(counterparty, dict):
-            counterparty = counterparty.get("name", "Unknown Counterparty")
+            counterparty = counterparty.get("name", "Counterparty")
 
-        # Contract Value and Currency
         val_obj = extract_prop("totalContractValue")
         if val_obj is not None:
             if isinstance(val_obj, dict):
@@ -155,364 +338,70 @@ class IroncladService:
                 contract_val = float(val_obj)
                 currency = "USD"
         else:
-            contract_val = float(raw_item.get("contractValue", 0.0))
+            contract_val = float(raw_item.get("contract_value", 0.0))
             currency = raw_item.get("currency", "USD")
 
-        # Department
-        department = extract_prop("department") or raw_item.get("department", "General")
+        department = extract_prop("department") or raw_item.get("department", "Operations")
+        creator_email = extract_prop("creatorEmail") or raw_item.get("creator_email") or "legal@company.com"
 
-        # Creator / Signer Email
-        creator_email = (
-            extract_prop("counterpartySignerEmail")
-            or (raw_item.get("creator", {}).get("email") if isinstance(raw_item.get("creator"), dict) else None)
-            or raw_item.get("creator_email")
-            or "system@ironclad.demo"
-        )
-
-        def parse_date(date_val: Any) -> Optional[datetime]:
+        def parse_date(date_val: Any) -> Optional[str]:
             if not date_val:
                 return None
             try:
                 clean_str = str(date_val).replace("Z", "+00:00")
-                return datetime.fromisoformat(clean_str)
+                return datetime.fromisoformat(clean_str).isoformat()
             except Exception:
-                return None
+                return str(date_val)
 
-        # 5. LIFECYCLE & TRACKING DATES
-        # Agreement Date (Date Formalized in Ironclad Repository)
-        agreement_date_raw = extract_prop("agreementDate") or raw_item.get("agreement_date")
-        agreement_date = parse_date(agreement_date_raw)
+        now_iso = datetime.utcnow().isoformat()
+        agreement_date = parse_date(extract_prop("agreementDate") or raw_item.get("agreement_date")) or now_iso
+        start_date = parse_date(extract_prop("startDate") or raw_item.get("start_date")) or agreement_date
+        completion_date = parse_date(extract_prop("completionDate") or raw_item.get("completion_date")) or parse_date(extract_prop("expirationDate"))
+        last_synced = parse_date(raw_item.get("lastUpdated") or raw_item.get("updatedAt")) or now_iso
 
-        # Start Date (Deliverable / Term start)
-        start_date_raw = (
-            extract_prop("startDate")
-            or extract_prop("effectiveDate")
-            or raw_item.get("start_date")
-            or raw_item.get("effectiveDate")
-        )
-        start_date = parse_date(start_date_raw) or agreement_date or now
-
-        # Completion Date (Target delivery / Expiration / Termination)
-        completion_date_raw = (
-            extract_prop("completionDate")
-            or extract_prop("expirationDate")
-            or raw_item.get("completion_date")
-            or raw_item.get("expirationDate")
-        )
-        completion_date = parse_date(completion_date_raw) or (start_date + timedelta(days=365) if start_date else now + timedelta(days=365))
-
-        # Signed Date (Countersignature completion)
-        signed_date_raw = extract_prop("signedDate") or extract_prop("countersignedDate") or raw_item.get("signed_date")
-        signed_date = parse_date(signed_date_raw) or (agreement_date if status_val == "signed" else None)
-
-        # Last Synced / Updated Date (Audit tracking for Data Lake integration)
-        last_updated_raw = (
-            raw_item.get("lastUpdated")
-            or raw_item.get("updatedAt")
-            or raw_item.get("created")
-        )
-        last_synced_date = parse_date(last_updated_raw) or now
-
-        # Renewal Notice Cutoff Date
-        notice_date_raw = extract_prop("renewalNoticeDate") or raw_item.get("renewal_notice_date")
-        renewal_notice_date = parse_date(notice_date_raw) or (completion_date - timedelta(days=30) if completion_date else None)
-
-        # Links (Related Records)
-        links = raw_item.get("links", [])
-
-        # Attachments / Document Links
-        doc_links = raw_item.get("documentLinks", []) or raw_item.get("attachments", [])
-
-        # Attributes
-        attributes = properties if properties else raw_item.get("attributes", {})
+        raw_attachments = raw_item.get("attachments", []) or raw_item.get("documentLinks", [])
+        clean_attachments = []
+        if raw_attachments:
+            for idx, att in enumerate(raw_attachments):
+                att_name = att.get("name") or f"Document_{idx+1}.pdf"
+                att_key = att.get("key") or f"{ironclad_id}/{att_name}"
+                clean_attachments.append({
+                    "id": idx + 1,
+                    "name": att_name,
+                    "key": att_key,
+                    "content_type": "application/pdf" if att_name.lower().endswith(".pdf") else "application/octet-stream",
+                    "file_size": att.get("file_size", att.get("size", 0)),
+                    "url": f"/api/v1/contracts/{ironclad_id}/attachments/{att_key}"
+                })
+        else:
+            # Default signedCopy attachment per Ironclad OpenAPI definition
+            clean_attachments.append({
+                "id": 1,
+                "name": f"{title}_SignedCopy.pdf",
+                "key": "signedCopy",
+                "content_type": "application/pdf",
+                "file_size": 0,
+                "url": f"/api/v1/contracts/{ironclad_id}/attachments/signedCopy"
+            })
 
         return {
+            "id": ironclad_id,
             "ironclad_id": ironclad_id,
             "title": title,
-            "template_name": template_name,
             "record_type": record_type,
+            "template_name": record_type,
             "status": status_val,
             "counterparty_name": str(counterparty),
             "contract_value": contract_val,
             "currency": currency,
-            "agreement_date": agreement_date or start_date,
+            "agreement_date": agreement_date,
             "start_date": start_date,
             "completion_date": completion_date,
-            "signed_date": signed_date,
-            "last_synced_date": last_synced_date,
-            "renewal_notice_date": renewal_notice_date,
-            "effective_date": start_date,
-            "expiration_date": completion_date,
-            "creator_email": creator_email,
+            "last_synced_date": last_synced,
+            "creator_email": str(creator_email),
             "department": str(department),
-            "attributes": attributes,
-            "related_records": links,
-            "document_links": doc_links
+            "attributes": properties if properties else raw_item.get("attributes", {}),
+            "attachments": clean_attachments
         }
-
-    def _get_mock_ironclad_records(self) -> List[Dict[str, Any]]:
-        """Mock records conforming to developer.ironcladapp.com Data Lake & Records schemas"""
-        now = datetime.utcnow()
-        return [
-            {
-                "id": "rec_ic_78910a",
-                "type": "Statement of Work",
-                "name": "SOW with Acme Cloud Solutions LLC",
-                "lastUpdated": now.isoformat(),
-                "properties": {
-                    "counterpartyName": {
-                        "type": "string",
-                        "value": "Acme Cloud Solutions LLC"
-                    },
-                    "totalContractValue": {
-                        "type": "monetary_amount",
-                        "value": {
-                            "currency": "USD",
-                            "amount": 175000.00
-                        }
-                    },
-                    "agreementDate": {
-                        "type": "date",
-                        "value": (now - timedelta(days=45)).isoformat()
-                    },
-                    "startDate": {
-                        "type": "date",
-                        "value": (now - timedelta(days=30)).isoformat()
-                    },
-                    "completionDate": {
-                        "type": "date",
-                        "value": (now + timedelta(days=150)).isoformat()
-                    },
-                    "signedDate": {
-                        "type": "date",
-                        "value": (now - timedelta(days=42)).isoformat()
-                    },
-                    "counterpartySignerEmail": {
-                        "type": "email",
-                        "value": "signer@acme-cloud.com"
-                    },
-                    "standard_renewalTermLength": {
-                        "type": "duration",
-                        "value": "P1Y"
-                    },
-                    "department": {
-                        "type": "string",
-                        "value": "Engineering"
-                    },
-                    "counterpartyBillingAddress": {
-                        "type": "address",
-                        "value": {
-                            "lines": ["4527 Mission Street", "Unit B"],
-                            "locality": "San Francisco",
-                            "country": "United States",
-                            "region": "California",
-                            "postcode": "94112"
-                        }
-                    }
-                },
-                "links": [
-                    {"recordId": "rec_parent_master_agreement_01"}
-                ],
-                "attachments": [
-                    {
-                        "name": "Acme_Cloud_SOW_Executed.pdf",
-                        "url": "https://developer.ironcladapp.com/sample-docs/acme-sow.pdf",
-                        "key": "ironclad/rec_ic_78910a/Acme_Cloud_SOW_Executed.pdf"
-                    }
-                ]
-            },
-            {
-                "id": "rec_ic_88921b",
-                "type": "Vendor Agreement",
-                "name": "Vendor Agreement with Palo Alto Networks",
-                "lastUpdated": (now - timedelta(days=2)).isoformat(),
-                "properties": {
-                    "counterpartyName": {
-                        "type": "string",
-                        "value": "Palo Alto Networks"
-                    },
-                    "totalContractValue": {
-                        "type": "monetary_amount",
-                        "value": {
-                            "currency": "USD",
-                            "amount": 320000.00
-                        }
-                    },
-                    "agreementDate": {
-                        "type": "date",
-                        "value": (now - timedelta(days=90)).isoformat()
-                    },
-                    "startDate": {
-                        "type": "date",
-                        "value": (now - timedelta(days=80)).isoformat()
-                    },
-                    "completionDate": {
-                        "type": "date",
-                        "value": (now + timedelta(days=285)).isoformat()
-                    },
-                    "signedDate": {
-                        "type": "date",
-                        "value": (now - timedelta(days=88)).isoformat()
-                    },
-                    "counterpartySignerEmail": {
-                        "type": "email",
-                        "value": "legal@paloaltonetworks.demo"
-                    },
-                    "department": {
-                        "type": "string",
-                        "value": "Security"
-                    }
-                },
-                "links": [
-                    {"recordId": "rec_parent_global_sec_02"}
-                ],
-                "attachments": [
-                    {
-                        "name": "PANW_Vendor_Agreement.pdf",
-                        "url": "https://developer.ironcladapp.com/sample-docs/panw-vendor.pdf",
-                        "key": "ironclad/rec_ic_88921b/PANW_Vendor_Agreement.pdf"
-                    }
-                ]
-            }
-        ]
-
-    def _get_mock_ironclad_workflows(self) -> List[Dict[str, Any]]:
-        """Realistic workflow schema payloads based on developer.ironcladapp.com specifications"""
-        now = datetime.utcnow()
-        return [
-            {
-                "id": "wf_ic_882910a",
-                "title": "Enterprise Cloud Services Agreement - Stripe Inc",
-                "template": "Master Services Agreement",
-                "step": "in_review",
-                "counterpartyName": "Stripe Inc",
-                "contractValue": 250000.0,
-                "currency": "USD",
-                "lastUpdated": now.isoformat(),
-                "agreementDate": now.isoformat(),
-                "effectiveDate": now.isoformat(),
-                "expirationDate": (now + timedelta(days=365)).isoformat(),
-                "creator": {"email": "legal-counsel@ironclad.demo", "name": "Sarah Jenkins"},
-                "department": "Engineering",
-                "documentLinks": [
-                    {
-                        "name": "Stripe_MSA_Executed_v2.pdf",
-                        "url": "https://developer.ironcladapp.com/sample-docs/stripe-msa.pdf",
-                        "key": "ironclad/wf_ic_882910a/Stripe_MSA_Executed_v2.pdf"
-                    }
-                ],
-                "attributes": {
-                    "governingLaw": "Delaware",
-                    "paymentTerms": "Net 30",
-                    "liabilityCap": "2x Annual Contract Value",
-                    "dataProcessingAddendum": True
-                }
-            },
-            {
-                "id": "wf_ic_991823b",
-                "title": "Global Data Processing Addendum - Snowflake",
-                "template": "Data Processing Addendum",
-                "step": "out_for_signature",
-                "counterpartyName": "Snowflake Inc",
-                "contractValue": 185000.0,
-                "currency": "USD",
-                "lastUpdated": (now - timedelta(days=1)).isoformat(),
-                "agreementDate": (now - timedelta(days=10)).isoformat(),
-                "effectiveDate": (now - timedelta(days=10)).isoformat(),
-                "expirationDate": (now + timedelta(days=720)).isoformat(),
-                "creator": {"email": "compliance@ironclad.demo", "name": "Marcus Vance"},
-                "department": "Security",
-                "documentLinks": [
-                    {
-                        "name": "Snowflake_DPA_Final.pdf",
-                        "url": "https://developer.ironcladapp.com/sample-docs/snowflake-dpa.pdf",
-                        "key": "ironclad/wf_ic_991823b/Snowflake_DPA_Final.pdf"
-                    }
-                ],
-                "attributes": {
-                    "gdprCompliant": True,
-                    "ccpaCompliant": True,
-                    "subprocessorsApproved": 14
-                }
-            },
-            {
-                "id": "wf_ic_102934c",
-                "title": "Mutual Non-Disclosure Agreement - OpenAI LLC",
-                "template": "Mutual NDA",
-                "step": "signed",
-                "counterpartyName": "OpenAI LLC",
-                "contractValue": 0.0,
-                "currency": "USD",
-                "lastUpdated": (now - timedelta(days=3)).isoformat(),
-                "agreementDate": (now - timedelta(days=45)).isoformat(),
-                "effectiveDate": (now - timedelta(days=45)).isoformat(),
-                "expirationDate": (now + timedelta(days=320)).isoformat(),
-                "creator": {"email": "admin@ironclad.demo", "name": "Elena Rostova"},
-                "department": "Legal",
-                "documentLinks": [
-                    {
-                        "name": "OpenAI_Mutual_NDA_Signed.pdf",
-                        "url": "https://developer.ironcladapp.com/sample-docs/openai-nda.pdf",
-                        "key": "ironclad/wf_ic_102934c/OpenAI_Mutual_NDA_Signed.pdf"
-                    }
-                ],
-                "attributes": {
-                    "confidentialityPeriodYears": 3,
-                    "jurisdiction": "California"
-                }
-            },
-            {
-                "id": "wf_ic_541920d",
-                "title": "Strategic Vendor SOW - Datadog Inc",
-                "template": "Statement of Work",
-                "step": "draft",
-                "counterpartyName": "Datadog Inc",
-                "contractValue": 92000.0,
-                "currency": "USD",
-                "lastUpdated": now.isoformat(),
-                "agreementDate": now.isoformat(),
-                "effectiveDate": now.isoformat(),
-                "expirationDate": (now + timedelta(days=180)).isoformat(),
-                "creator": {"email": "procurement@ironclad.demo", "name": "David Kim"},
-                "department": "DevOps",
-                "documentLinks": [
-                    {
-                        "name": "Datadog_SOW_Draft_v1.docx",
-                        "url": "https://developer.ironcladapp.com/sample-docs/datadog-sow.docx",
-                        "key": "ironclad/wf_ic_541920d/Datadog_SOW_Draft_v1.docx"
-                    }
-                ],
-                "attributes": {
-                    "milestonesCount": 4,
-                    "slaCommitment": "99.95%"
-                }
-            },
-            {
-                "id": "wf_ic_772019e",
-                "title": "Corporate Master Software License - Microsoft Corp",
-                "template": "Software License Agreement",
-                "step": "signed",
-                "counterpartyName": "Microsoft Corporation",
-                "contractValue": 450000.0,
-                "currency": "USD",
-                "lastUpdated": (now - timedelta(days=10)).isoformat(),
-                "agreementDate": (now - timedelta(days=120)).isoformat(),
-                "effectiveDate": (now - timedelta(days=120)).isoformat(),
-                "expirationDate": (now + timedelta(days=245)).isoformat(),
-                "creator": {"email": "it-procure@ironclad.demo", "name": "Rachel Adams"},
-                "department": "IT Operations",
-                "documentLinks": [
-                    {
-                        "name": "MSFT_Enterprise_License_Executed.pdf",
-                        "url": "https://developer.ironcladapp.com/sample-docs/msft-license.pdf",
-                        "key": "ironclad/wf_ic_772019e/MSFT_Enterprise_License_Executed.pdf"
-                    }
-                ],
-                "attributes": {
-                    "seatCount": 1200,
-                    "premierSupportIncluded": True
-                }
-            }
-        ]
 
 ironclad_service = IroncladService()

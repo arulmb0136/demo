@@ -6,8 +6,8 @@ from pydantic import field_validator
 class Settings(BaseSettings):
     # App Settings
     APP_NAME: str = "Ironclad Contract Hub API"
-    ENVIRONMENT: str = "development"
-    DEBUG: bool = True
+    ENVIRONMENT: str = "production"
+    DEBUG: bool = False
     PORT: int = 8000
     HOST: str = "0.0.0.0"
 
@@ -22,34 +22,23 @@ class Settings(BaseSettings):
 
     # Logging
     LOG_LEVEL: str = "INFO"
-    LOG_FORMAT: str = "colored"  # "colored" or "json"
+    LOG_FORMAT: str = "colored"
 
     # Security & JWT
     SECRET_KEY: str = "ironclad_super_secret_jwt_key_change_in_production_2026_xyz!"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
 
-    # Database
+    # PostgreSQL Database (ONLY for Users, Roles & Permissions)
     DATABASE_URL: str = "postgresql://postgres:postgres@localhost:5432/ironclad_db"
 
-    # Data Source Toggle: 'postgres' or 'ironclad'
-    DATA_SOURCE: str = "postgres"
-
-    # Ironclad API Configuration
-    IRONCLAD_API_BASE_URL: str = "https://ironcladapp.com/api/v1"
-    IRONCLAD_CLIENT_ID: str = "ironclad_demo_client_id"
-    IRONCLAD_CLIENT_SECRET: str = "ironclad_demo_client_secret"
-    IRONCLAD_BEARER_TOKEN: str = "demo_ironclad_bearer_token"
-    IRONCLAD_DEMO_MODE: bool = True
-
-    # S3 / MinIO Configuration
-    S3_ENDPOINT_URL: str = "http://localhost:9000"
-    S3_ACCESS_KEY_ID: str = "minioadmin"
-    S3_SECRET_ACCESS_KEY: str = "minioadmin"
-    S3_BUCKET_NAME: str = "ironclad-documents"
-    S3_REGION: str = "us-east-1"
-    S3_USE_SSL: bool = False
-    S3_MOCK_FALLBACK: bool = True
+    # Ironclad Live API Credentials (developer.ironcladapp.com)
+    # Server URLs: https://ironcladapp.com/public/api/v1 (or demo.ironcladapp.com, eu1.ironcladapp.com)
+    IRONCLAD_API_BASE_URL: str = "https://ironcladapp.com/public/api/v1"
+    IRONCLAD_TOKEN_URL: str = "https://ironcladapp.com/oauth/token"
+    IRONCLAD_CLIENT_ID: str = ""
+    IRONCLAD_CLIENT_SECRET: str = ""
+    IRONCLAD_AS_USER_EMAIL: str = ""
 
     model_config = SettingsConfigDict(
         env_file=(".env", "../.env", "backend/.env"),
@@ -58,3 +47,11 @@ class Settings(BaseSettings):
     )
 
 settings = Settings()
+
+# Support environment variable aliases
+if not settings.IRONCLAD_CLIENT_ID and os.getenv("CLIENT_ID"):
+    settings.IRONCLAD_CLIENT_ID = os.environ["CLIENT_ID"].strip()
+if not settings.IRONCLAD_CLIENT_SECRET and os.getenv("CLIENT_SECRET"):
+    settings.IRONCLAD_CLIENT_SECRET = os.environ["CLIENT_SECRET"].strip()
+if not settings.IRONCLAD_AS_USER_EMAIL and os.getenv("X_AS_USER_EMAIL"):
+    settings.IRONCLAD_AS_USER_EMAIL = os.environ["X_AS_USER_EMAIL"].strip()

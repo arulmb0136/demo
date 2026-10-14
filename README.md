@@ -1,295 +1,267 @@
-# Ironclad Contract Hub & Analytics Platform
+# Ironclad Live Contract Hub & RBAC Management Platform
 
-A high-performance enterprise contract management, workflow automation, and analytics platform featuring a **React (Vite + TypeScript)** frontend and a **FastAPI** backend. Built with a layered architecture, role-based access control (RBAC), multi-theme design system, centralized logging with correlation IDs, Ironclad API synchronization, PostgreSQL persistence, and S3 document storage.
-
----
-
-## Table of Contents
-1. [Architecture Overview](#architecture-overview)
-2. [Prerequisites](#prerequisites)
-3. [Quick Start with Docker](#quick-start-with-docker)
-4. [Local Development Setup](#local-development-setup)
-   - [Backend Setup (FastAPI)](#backend-setup-fastapi)
-   - [Database Seeding](#database-seeding)
-   - [Frontend Setup (React + Vite)](#frontend-setup-react--vite)
-5. [Environment Configuration](#environment-configuration)
-6. [Demo Accounts](#demo-accounts)
-7. [API Documentation](#api-documentation)
-8. [Project Structure](#project-structure)
+A production-ready enterprise contract management and analytics platform featuring a **React (Vite + TypeScript)** frontend and a **FastAPI** backend.
 
 ---
 
-## Architecture Overview
+## 1. Architectural Principles
 
+1. **Zero Database Contract Storage**:
+   - Contracts, agreements, and document metadata are **never** persisted to the local PostgreSQL database.
+   - All contract data is fetched live in real time from the **Ironclad API** (`developer.ironcladapp.com`).
+2. **PostgreSQL Exclusively for User & Role RBAC**:
+   - The PostgreSQL database manages **only** User Accounts (`users`) and Role Definitions & Permission Policies (`role_definitions`).
+3. **Automated OAuth2 Token Lifecycle**:
+   - Provide only your `IRONCLAD_CLIENT_ID` and `IRONCLAD_CLIENT_SECRET`.
+   - The backend automatically acquires access tokens via `POST /oauth/token` (`client_credentials` grant) and transparently handles background token refresh.
+4. **Strict 3-Record-Type Filtering**:
+   - Only contracts matching the following three allowed record types are processed and displayed in the UI:
+     - `Property Service Contract`
+     - `Purchase & Sales Agreement`
+     - `General Services Agreement`
+   - All other contract types from the Ironclad repository are filtered out.
+5. **View & Download Only Contract Surface**:
+   - Contract mutation endpoints (create, edit, delete, upload) have been removed.
+   - Operations on contracts are strictly **View Details** and **View/Download Document Attachments** based on RBAC permissions.
+6. **Live Document Streaming**:
+   - Attachments are streamed directly from `GET /public/api/v1/records/{id}/attachments/{key}` through the backend to the browser with standard `Content-Disposition`.
+7. **Post-Login Real-Time Notifications**:
+   - An integrated polling listener notifies the logged-in user whenever new contracts or agreements arrive from Ironclad.
+8. **Dynamic 8-Theme System**:
+   - Supports Dark Modern, Clean Light, Deep Blue, Pastel Pink, Charcoal Grey, Bright Yellow, LinkedIn Theme, and Windows Theme with persistent theme switching.
+
+---
+
+## 2. Environment Configuration
+
+### Backend Configuration (`backend/.env`)
+
+Create or update `backend/.env` (you can copy from `backend/.env.example`):
+
+```bash
+# -----------------------------------------------------------------------------
+# FastAPI Application Configuration
+# -----------------------------------------------------------------------------
+APP_NAME="Ironclad Contract Hub API"
+ENVIRONMENT="production"
+DEBUG=false
+PORT=8000
+HOST="0.0.0.0"
+
+# CORS Allowed Origins
+ALLOWED_ORIGINS="http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173"
+
+# Centralized Logging
+LOG_LEVEL="INFO"
+LOG_FORMAT="colored"
+
+# Security & JWT Authentication (for platform login)
+SECRET_KEY="ironclad_super_secret_jwt_key_change_in_production_2026_xyz!"
+ALGORITHM="HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES=1440
+
+# -----------------------------------------------------------------------------
+# PostgreSQL Database (ONLY for Users, Roles & Permissions)
+# Contracts and documents are NOT stored here.
+# -----------------------------------------------------------------------------
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/ironclad_db"
+
+# -----------------------------------------------------------------------------
+# Ironclad Live API Credentials (developer.ironcladapp.com)
+# -----------------------------------------------------------------------------
+# Server URLs:
+#   Production: https://ironcladapp.com/public/api/v1
+#   Demo:       https://demo.ironcladapp.com/public/api/v1
+#   EU:         https://eu1.ironcladapp.com/public/api/v1
+IRONCLAD_API_BASE_URL="https://ironcladapp.com/public/api/v1"
+IRONCLAD_TOKEN_URL="https://ironcladapp.com/oauth/token"
+IRONCLAD_CLIENT_ID="YOUR_CLIENT_ID_UUID"
+IRONCLAD_CLIENT_SECRET="YOUR_CLIENT_SECRET"
+
+# Optional actor header (x-as-user-email)
+IRONCLAD_AS_USER_EMAIL=""
+
+# Aliases CLIENT_ID and CLIENT_SECRET are also supported.
 ```
-                      +-----------------------------+
-                      |   React + Vite Frontend     |
-                      |   (Port 5173 / Docker 80)   |
-                      +--------------+--------------+
-                                     |
-                         Axios / REST (JWT Bearer)
-                                     |
-                      +--------------v--------------+
-                      |       FastAPI Backend       |
-                      |          (Port 8000)        |
-                      +--------------+--------------+
-                                     |
-          +--------------------------+--------------------------+
-          |                          |                          |
-+---------v----------+    +----------v---------+    +-----------v----------+
-|  PostgreSQL 16 DB  |    |  Ironclad REST API |    |  AWS S3 / MinIO      |
-|  (Port 5432)       |    |  (Toggleable Sync) |    |  (Document Storage)  |
-+--------------------+    +--------------------+    +----------------------+
+
+### Frontend Configuration (`frontend/.env`)
+
+Create or update `frontend/.env` (or copy from `frontend/.env.example`):
+
+```bash
+VITE_API_BASE_URL=http://localhost:8000
+VITE_APP_TITLE="Ironclad Contract Hub"
+VITE_ENABLE_ANALYTICS=true
+VITE_DEFAULT_THEME=dark
 ```
 
-- **Frontend:** React 18, Vite, TypeScript, Lucide Icons, Chart.js / Canvas BI Engine, Context-based RBAC and 8-theme dynamic switcher.
-- **Backend:** FastAPI, Python 3.11+, SQLAlchemy 2.0 (async/sync), Pydantic v2, Jose JWT, Boto3 S3 client, Requests/Httpx for Ironclad API.
-- **Database:** PostgreSQL 16 (via Docker or local instance).
-- **Storage:** Amazon S3 or MinIO / Local Emulated S3 storage fallback.
-
 ---
 
-## Prerequisites
+## 3. Step-by-Step Setup & Execution
 
-- **Node.js:** v18.x or v20.x+ (`v22.x` tested)
-- **Python:** 3.10+ (`3.11` or `3.12` / `3.14` supported)
-- **Docker & Docker Compose:** Optional for containerized deployment, recommended for PostgreSQL.
+### Step 3.1: Start the Backend (FastAPI)
 
----
-
-## Quick Start with Docker
-
-Run the complete multi-tier stack (PostgreSQL, FastAPI Backend, React Frontend) in containers:
-
-1. **Clone repository and enter project root:**
+1. Open a terminal and navigate to the backend directory:
    ```bash
-   cd d:/Ironclad
+   cd d:\Ironclad\backend
    ```
 
-2. **Copy environment configuration files:**
-   ```bash
-   cp backend/.env.example backend/.env
-   cp frontend/.env.example frontend/.env
-   cp config/postgres.env.example config/postgres.env
-   cp config/s3.env.example config/s3.env
-   ```
-
-3. **Launch all services using Docker Compose:**
-   ```bash
-   docker compose up --build -d
-   ```
-
-4. **Verify container status:**
-   ```bash
-   docker compose ps
-   ```
-
-5. **Seed the database inside the backend container:**
-   ```bash
-   docker compose exec backend python -m scripts.init_db
-   ```
-
-6. **Access applications:**
-   - **Frontend App:** [http://localhost:5173](http://localhost:5173) (or [http://localhost:80](http://localhost:80) in production mode)
-   - **FastAPI Interactive Docs (Swagger):** [http://localhost:8000/docs](http://localhost:8000/docs)
-   - **FastAPI Alternative Docs (ReDoc):** [http://localhost:8000/redoc](http://localhost:8000/redoc)
-   - **Healthcheck:** [http://localhost:8000/api/v1/health](http://localhost:8000/api/v1/health)
-
----
-
-## Local Development Setup
-
-If running natively without Docker:
-
-### Backend Setup (FastAPI)
-
-1. **Navigate to the backend directory:**
-   ```bash
-   cd backend
-   ```
-
-2. **Create and activate a virtual environment:**
-   ```bash
-   # Windows PowerShell
-   python -m venv .venv
-   .venv\Scripts\Activate.ps1
-
-   # macOS / Linux
-   python3 -m venv .venv
-   source .venv/bin/activate
-   ```
-
-3. **Install dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. **Setup environment variables:**
-   ```bash
-   cp .env.example .env
-   ```
-   *Edit `.env` to configure your PostgreSQL connection string, Ironclad credentials, and JWT secret.*
-
-5. **Initialize and seed database:**
+2. Initialize the PostgreSQL schema (creates only `users` and `role_definitions` tables and seeds initial administrator and role accounts):
    ```bash
    python -m scripts.init_db
    ```
 
-6. **Start the FastAPI server:**
+3. Launch the FastAPI backend server:
    ```bash
-   uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+   python -m uvicorn app.main:app --reload --port 8000
    ```
 
-### Frontend Setup (React + Vite)
+   - Backend API is accessible at: `http://localhost:8000`
+   - Interactive Swagger API Documentation: `http://localhost:8000/docs`
+   - Health Check: `http://localhost:8000/api/v1/health`
 
-1. **Navigate to the frontend directory:**
+---
+
+### Step 3.2: Start the Frontend (React + Vite)
+
+1. Open a separate terminal and navigate to the frontend directory:
    ```bash
-   cd frontend
+   cd d:\Ironclad\frontend
    ```
 
-2. **Install npm dependencies:**
+2. Install dependencies (if not already installed):
    ```bash
    npm install
    ```
 
-3. **Setup environment variables:**
-   ```bash
-   cp .env.example .env
-   ```
-   *Ensure `VITE_API_BASE_URL=http://localhost:8000` is configured.*
-
-4. **Start the Vite development server:**
+3. Launch the Vite development server:
    ```bash
    npm run dev
    ```
 
-5. **Open browser:** [http://localhost:5173](http://localhost:5173)
+   - Open your browser at: `http://localhost:5173`
 
 ---
 
-## Database Seeding & Schema Migrations
+## 4. Pre-Configured Test Accounts (RBAC)
 
-To populate the database with complete contract lifecycle tracking dates and demo users, run the migration & seeding script:
+The PostgreSQL database is seeded with accounts to test the Role-Based Access Control matrix:
 
-```bash
-# From within the backend directory:
-python -m scripts.init_db
+| Persona | Email | Password | Role | Permissions & Policies |
+|---|---|---|---|---|
+| **System Administrator** | `admin@ironclad.demo` | `Admin123!` | `admin` | Full system access: `contracts:view`, `contracts:download`, `users:manage`, `roles:manage` |
+| **Operations Manager** | `manager@ironclad.demo` | `Manager123!` | `manager` | `contracts:view`, `contracts:download` |
+| **Legal Counsel / Specialist** | `editor@ironclad.demo` | `Editor123!` | `editor` | `contracts:view`, `contracts:download` |
+| **Compliance Auditor** | `viewer@ironclad.demo` | `Viewer123!` | `viewer` | `contracts:view` only (**Document downloads restricted**) |
 
-# Or from the project root (Docker container):
-docker compose exec backend python -m scripts.init_db
+---
+
+## 5. Live Data Flow & Features Walkthrough
+
+### 5.1 Listing Record IDs & Whitelisted Records
+1. Upon logging in, the frontend queries `GET /api/v1/contracts`.
+2. The backend:
+   - Validates that the logged-in user possesses the `contracts:view` permission policy.
+   - Automatically acquires a valid OAuth2 bearer token from Ironclad.
+   - Calls `GET /public/api/v1/records/ids`.
+   - Retrieves record details via `GET /public/api/v1/records/{id}`.
+   - Discards any record that is **not** one of the 3 whitelisted types:
+     - `Property Service Contract`
+     - `Purchase & Sales Agreement`
+     - `General Services Agreement`
+   - Returns the filtered records to the frontend.
+3. The UI presents:
+   - The list of live Record IDs in the top status bar.
+   - Category filter pills for each of the 3 allowed record types.
+   - Interactive responsive grid cards.
+   - Sortable data table view.
+   - Lite BI Tool analytics dashboard.
+
+### 5.2 Viewing Agreement Details & Attachments
+1. Click on any contract card or row to open the **Contract Detailed View**.
+2. Inspect lifecycle tracking dates (Agreement Date, Start Date, Expiration Date, Last Synced Date) and custom attributes.
+3. View the list of document attachments:
+   - **View Document**: Opens the document in an inline browser tab (`disposition=inline`) if user has `contracts:view` permission.
+   - **Download Document**: Streams the binary file (`disposition=attachment`) if user has `contracts:download` permission. Users with restricted roles (such as `viewer`) will see the download button disabled.
+
+### 5.3 Live Post-Login Notifications
+- The application periodically queries `/api/v1/contracts/notifications/check`.
+- When new contracts or agreements arrive from Ironclad, a toast notification alerts the user, and the notification bell dropdown lists recent arrivals.
+
+### 5.4 User & Role Management
+- Administrators (`admin`) can navigate to the **User & Role Management** tab:
+  - **+ Add User**: Add new users with assigned roles and permission policies.
+  - **Edit User**: Modify user profiles, update active status, or change role assignments.
+  - **+ Add Role**: Create custom roles with tailored default permission policies.
+  - **Edit Role**: Modify existing role names, descriptions, and permission policies.
+  - **Whitelisted Categories**: Inspect authorized Ironclad record types and their governance policies.
+
+---
+
+## 6. Directory Structure
+
 ```
-
-### What this script does:
-1. **Automated Schema Migration:** Detects if any columns are missing (e.g. `start_date`, `completion_date`, `agreement_date`, `signed_date`, `last_synced_date`, `renewal_notice_date`, `related_records`) and executes safe `ALTER TABLE ... ADD COLUMN` statements with zero data loss.
-2. **Role & Permission Matrix Seeding:** Seeds default RBAC roles (`admin`, `manager`, `editor`, `viewer`) and granular capabilities (`read`, `write`, `edit`, `delete`, `admin`).
-3. **Demo User Accounts:** Seeds 4 predefined accounts with salted bcrypt password hashes.
-4. **Rich Contract Lifecycle Demo Data:** Populates sample contracts representing diverse workflows (Master Services Agreements, Mutual NDAs, DPAs, SOWs, Software Licenses) with realistic start dates, completion milestones, and attached documents.
-5. **Backfill Existing Contracts:** If existing contracts lack tracking dates, it backfills baseline dates automatically.
-
----
-
-## Connecting with Real Ironclad API (`developer.ironcladapp.com`)
-
-To switch from the local sandbox / mock mode to live Ironclad Cloud API integration:
-
-### Step 1: Generate API Credentials in Ironclad
-1. Log into your Ironclad enterprise tenant (e.g. `https://ironcladapp.com`).
-2. Navigate to **Company Settings** (gear icon in lower-left) &rarr; **Integrations & API**.
-3. Under **API Tokens / Service Accounts**, click **Create API Token** (or create an OAuth2 Connected App).
-4. Assign appropriate scopes:
-   - `records:read` & `records:write` (for Records API access)
-   - `workflows:read` (for Workflow synchronizations)
-5. Copy your **API Token / Bearer Token** and **Client ID / Secret**.
-
-### Step 2: Configure Secrets in `backend/.env`
-Open [backend/.env](file:///d:/Ironclad/backend/.env) (created from `backend/.env.example`) and configure the Ironclad parameters:
-
-```ini
-# ==============================================================================
-# IRONCLAD API & DATA LAKE CONFIGURATION (developer.ironcladapp.com)
-# ==============================================================================
-
-# 1. Base URL for your Ironclad Region:
-# US Commercial: https://ironcladapp.com/public/api/v1
-# EU Cloud:      https://eu.ironcladapp.com/public/api/v1
-# Demo Sandbox:  https://demo.ironcladapp.com/public/api/v1
-IRONCLAD_API_BASE_URL=https://ironcladapp.com/public/api/v1
-
-# 2. OAuth2 / Service Account Secrets:
-IRONCLAD_CLIENT_ID=your_ironclad_client_id_here
-IRONCLAD_CLIENT_SECRET=your_ironclad_client_secret_here
-
-# 3. Personal Access Token / Bearer Token (if using Direct Bearer Authentication):
-IRONCLAD_BEARER_TOKEN=your_ironclad_bearer_token_here
-
-# 4. Turn OFF Demo Mode to trigger live HTTP requests to Ironclad:
-IRONCLAD_DEMO_MODE=false
-
-# 5. Data Source Routing Toggle:
-# Set to 'ironclad' to pull directly from Ironclad API, or 'postgres' for local DB with one-click live sync:
-DATA_SOURCE=ironclad
+Ironclad/
+├── ARCHITECTURE.md          # Complete technical design & sequence diagrams (v2.0)
+├── FEATURES.md              # Functional specifications & RBAC definitions
+├── TASKS.md                 # Sequential execution plan & completed milestones
+├── README.md                # Setup guide and instructions
+│
+├── backend/
+│   ├── app/
+│   │   ├── api/v1/
+│   │   │   ├── auth.py      # /login, /me, /register
+│   │   │   ├── contracts.py # /contracts (Live Ironclad proxy & attachment streamer)
+│   │   │   ├── roles.py     # /roles (Role matrix, add/edit role)
+│   │   │   ├── users.py     # /users (User administration, add/edit user)
+│   │   │   └── health.py    # /health probe
+│   │   ├── core/
+│   │   │   ├── config.py    # Externalized settings (Client ID & Secret loading)
+│   │   │   ├── database.py  # SQLAlchemy engine & session provider
+│   │   │   ├── logging.py   # Centralized structured logger
+│   │   │   └── security.py  # JWT & RBAC permission dependency checkers
+│   │   ├── middleware/
+│   │   │   └── logging_middleware.py # Request tracing & correlation IDs
+│   │   ├── models/
+│   │   │   ├── base.py      # Declarative base & timestamp mixins
+│   │   │   ├── user.py      # User model (PostgreSQL)
+│   │   │   └── role_permission.py # Role definitions model (PostgreSQL)
+│   │   ├── schemas/
+│   │   │   ├── user.py      # User schemas
+│   │   │   ├── role.py      # Role & matrix schemas
+│   │   │   └── contract.py  # Live Ironclad record & attachment schemas
+│   │   ├── services/
+│   │   │   ├── auth_service.py     # Platform authentication
+│   │   │   ├── ironclad_service.py # Pure live Ironclad API client & OAuth manager
+│   │   │   └── user_service.py     # User & role CRUD operations
+│   │   └── main.py          # FastAPI application factory
+│   ├── scripts/
+│   │   └── init_db.py       # Seeds PostgreSQL users & role definitions ONLY
+│   └── requirements.txt
+│
+└── frontend/
+    ├── src/
+    │   ├── api/
+    │   │   └── client.ts    # Axios client with Bearer token & correlation ID interceptor
+    │   ├── context/
+    │   │   ├── AuthContext.tsx  # Authentication & permission validation (`hasPermission`)
+    │   │   └── ThemeContext.tsx # 8 Dynamic themes switcher
+    │   ├── components/
+    │   │   ├── Navbar.tsx             # Header with theme dropdown & notification bell
+    │   │   ├── NotificationCenter.tsx # Live notification dropdown & toast alerts
+    │   │   ├── ContractCard.tsx       # Responsive record card with Record ID & details
+    │   │   ├── ContractDetailModal.tsx# Agreement detail view & document download/view
+    │   │   ├── BiTool.tsx              # Lite BI Tool analytics & charts
+    │   │   ├── ThemeSelector.tsx      # 8-theme visual palette switcher
+    │   │   └── ProtectedRoute.tsx     # Route authorization guard
+    │   ├── pages/
+    │   │   ├── Dashboard.tsx  # Responsive grid & table view of allowed contracts
+    │   │   ├── AdminRoles.tsx # User Add/Edit & Role Add/Edit management console
+    │   │   ├── SignIn.tsx     # Sign-in page with 1-click test credentials
+    │   │   └── Home.tsx       # System overview & live connection architecture
+    │   ├── types/
+    │   │   └── index.ts       # TypeScript interface definitions
+    │   └── styles/
+    │       └── index.css      # CSS custom properties for all 8 dynamic themes
+    └── package.json
 ```
-
-### Step 3: Verify Real Connection
-Restart the backend server (`uvicorn app.main:app --reload` or Docker container). 
-Click **"Sync with Ironclad"** in the web dashboard or send a POST request:
-```bash
-curl -X POST http://localhost:8000/api/v1/contracts/sync-ironclad \
-     -H "Authorization: Bearer <YOUR_JWT_TOKEN>"
-```
-The sync engine will pull records using the Data Lake query filter (`/public/api/v1/records?lastUpdated=...`), extract lifecycle dates, and upsert them into PostgreSQL.
-
----
-
-## Contract Lifecycle & Tracking Dates (Data Lake Schema)
-
-Derived from the [Ironclad Data Lake / Warehouse Integration Specification](https://developer.ironcladapp.com/docs/data-lakedata-warehouse-integration):
-
-| Field Name | Type | Description | Ironclad Source |
-|------------|------|-------------|-----------------|
-| `agreement_date` | `datetime` | Date the contract was formally agreed upon | `record.properties.agreementDate.value` |
-| `start_date` | `datetime` | Term commencement date | `record.properties.startDate.value` |
-| `completion_date` | `datetime` | Target or actual contract expiration / completion date | `record.properties.expirationDate.value` |
-| `current_date` | `datetime` | Server evaluation reference timestamp (UTC) | Dynamic (`utcnow()`) |
-| `signed_date` | `datetime` | Execution / countersignature timestamp | `record.properties.signedDate.value` |
-| `last_synced_date` | `datetime` | Timestamp of last synchronization with Ironclad | `record.lastUpdated` query filter |
-| `renewal_notice_date` | `datetime` | Deadline for providing renewal or non-renewal notice | Computed / `properties.renewalNotice.value` |
-| `days_remaining` | `int` | Computed days remaining until completion date | Computed dynamically on server & UI |
-| `progress_percent` | `float` | Percentage of contract term elapsed (0% to 100%) | Computed dynamically on server & UI |
-| `tracking_status` | `string` | Status: `active`, `expiring_soon` (<30d), `completed`, `expired` | Computed dynamically on server & UI |
-
----
-
-## Environment Configuration
-
-Externalized environment files are stored in `backend/.env`, `frontend/.env`, and `config/`:
-
-| File | Purpose |
-|------|---------|
-| `backend/.env.example` | FastAPI server config, Database URL, JWT Secrets, Ironclad API keys, S3 credentials |
-| `frontend/.env.example` | Vite API endpoints, Application title, Feature flags |
-| `config/postgres.env.example` | PostgreSQL Docker container credentials (`POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`) |
-| `config/s3.env.example` | AWS S3 / MinIO bucket name, region, endpoint URL, credentials |
----
-
-## Demo Accounts
-
-The database seeding script (`python -m scripts.init_db`) provisions 4 test accounts:
-
-| Role | Email | Password | Permissions | Key Capabilities |
-|------|-------|----------|-------------|------------------|
-| **Admin** | `admin@ironclad.demo` | `Admin123!` | `read, write, edit, delete, admin` | Full platform control, RBAC manager, S3 file uploads, Ironclad sync |
-| **Manager** | `manager@ironclad.demo` | `Manager123!` | `read, write, edit` | Create and edit contracts, view BI dashboard, download documents |
-| **Editor** | `editor@ironclad.demo` | `Editor123!` | `read, write, edit` | Update contract records, upload revisions, view grid & table |
-| **Viewer** | `viewer@ironclad.demo` | `Viewer123!` | `read` | Read-only access to contracts & BI visualization, restricted downloads |
-
----
-
-## Key Features
-
-- **Ironclad API Integration:** Toggle seamlessly between local PostgreSQL storage and direct Ironclad API integration (`DATA_SOURCE=ironclad` vs `DATA_SOURCE=postgres`). Includes one-click live sync.
-- **Lite BI Visualization Tool:** Interactive metrics, contract status donuts, monthly pipeline trends, counterparty exposure bars, and category distributions.
-- **8 Dynamic UI Themes:** Dark, Light, Deep Blue, Pastel Pink, Charcoal Grey, Bright Yellow, LinkedIn Theme, and Windows Theme.
-- **Centralized Logging:** Correlation IDs (`X-Correlation-ID`) tracked across middleware, request lifecycle, services, and repositories.
-- **RBAC Matrix Editor:** Admin panel to dynamically inspect and configure roles, permissions, and user assignments.
-- **Document Storage:** S3 / MinIO integration with fallback mock storage for seamless offline development.

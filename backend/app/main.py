@@ -2,7 +2,6 @@ import os
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
 
 from app.core.config import settings
 from app.core.logging import logger
@@ -11,14 +10,13 @@ from app.middleware.logging_middleware import CorrelationIdAndLoggingMiddleware
 from app.api.v1.health import router as health_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.contracts import router as contracts_router
-from app.api.v1.files import router as files_router
 from app.api.v1.roles import router as roles_router
 from app.api.v1.users import router as users_router
 
 app = FastAPI(
     title=settings.APP_NAME,
-    description="Enterprise Contract Lifecycle Management & Analytics Platform integrating with Ironclad API and S3",
-    version="1.0.0",
+    description="Ironclad Live Contract Hub & RBAC Management Platform",
+    version="2.0.0",
     docs_url="/docs",
     redoc_url="/redoc"
 )
@@ -41,7 +39,6 @@ API_V1_PREFIX = "/api/v1"
 app.include_router(health_router, prefix=API_V1_PREFIX)
 app.include_router(auth_router, prefix=API_V1_PREFIX)
 app.include_router(contracts_router, prefix=API_V1_PREFIX)
-app.include_router(files_router, prefix=API_V1_PREFIX)
 app.include_router(roles_router, prefix=API_V1_PREFIX)
 app.include_router(users_router, prefix=API_V1_PREFIX)
 
@@ -61,10 +58,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 @app.on_event("startup")
 async def startup_event():
     logger.info(f"Starting {settings.APP_NAME} in '{settings.ENVIRONMENT}' mode")
-    logger.info(f"Data Source configured as: {settings.DATA_SOURCE.upper()}")
-    # Ensure uploads directory exists
-    uploads_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../uploads"))
-    os.makedirs(uploads_dir, exist_ok=True)
+    logger.info("Contract data source: Live Ironclad API (Zero Database Contract Persistence)")
 
 @app.on_event("shutdown")
 async def shutdown_event():

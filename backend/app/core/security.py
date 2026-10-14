@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta
-from typing import Optional, List, Callable
+from typing import Optional, List, Callable, Set
 import bcrypt
 from jose import JWTError, jwt
 from fastapi import Depends, HTTPException, status
@@ -10,6 +10,17 @@ from app.core.database import get_db
 from app.core.logging import logger
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
+
+# Aliases to guarantee backward and cross-compatibility
+PERMISSION_ALIASES = {
+    "contracts:view": {"contracts:view", "read", "view"},
+    "contracts:download": {"contracts:download", "download"},
+    "users:manage": {"users:manage", "admin"},
+    "roles:manage": {"roles:manage", "admin"},
+    "read": {"read", "contracts:view", "view"},
+    "download": {"download", "contracts:download"},
+    "admin": {"admin", "users:manage", "roles:manage"}
+}
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify a plain password against a bcrypt hash"""
@@ -76,17 +87,19 @@ def require_role(allowed_roles: List[str]) -> Callable:
     return role_checker
 
 def require_permission(permission: str) -> Callable:
-    """Dependency factory checking user has specific permission grant"""
+    """Dependency factory checking user has specific permission grant or acceptable alias"""
     def permission_checker(current_user = Depends(get_current_user)):
         # Admin role implicitly grants all permissions
         if current_user.role == "admin":
             return current_user
 
-        user_perms = current_user.permissions or []
-        if permission not in user_perms:
+        user_perms = set(current_user.permissions or [])
+        acceptable_keys = PERMISSION_ALIASES.get(permission, {permission})
+
+        if not user_perms.intersection(acceptable_keys):
             logger.warning(
                 f"Access denied: User {current_user.email} lacks permission '{permission}'. "
-                f"Available: {user_perms}"
+                f"User permissions: {user_perms}"
             )
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,

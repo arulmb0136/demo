@@ -16,6 +16,16 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+const PERMISSION_ALIASES: Record<string, string[]> = {
+  'contracts:view': ['contracts:view', 'read', 'view'],
+  'contracts:download': ['contracts:download', 'download'],
+  'users:manage': ['users:manage', 'admin'],
+  'roles:manage': ['roles:manage', 'admin'],
+  'read': ['read', 'contracts:view', 'view'],
+  'download': ['download', 'contracts:download'],
+  'admin': ['admin', 'users:manage', 'roles:manage']
+};
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(() => {
     const saved = localStorage.getItem('ironclad_user');
@@ -80,7 +90,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!user) return false;
     // Admins implicitly possess all permissions
     if (user.role === 'admin') return true;
-    return Array.isArray(user.permissions) && user.permissions.includes(permission);
+    const userPerms = Array.isArray(user.permissions) ? user.permissions : [];
+    const acceptable = PERMISSION_ALIASES[permission] || [permission];
+    return userPerms.some((p) => acceptable.includes(p));
   };
 
   const hasRole = (role: string | string[]): boolean => {

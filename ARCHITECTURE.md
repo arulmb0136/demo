@@ -1,351 +1,226 @@
-# System Architecture & Technical Design
+# System Architecture & Technical Design (v2.0)
 
-## 1. High-Level Architecture Overview
+## 1. High-Level Architectural Overview
 
-The Ironclad Contract Hub is built following enterprise-grade **Layered Architecture** principles, strict separation of concerns, 12-factor externalized configuration, and zero-trust role-based access control.
+The Ironclad Contract Hub has been re-architected into a **Zero-Storage Live Contract Integration Platform** with dedicated **PostgreSQL Role & Access Management (RBAC)**.
+
+### Architectural Principles:
+1. **Zero Database Contract Persistence**: Contract agreements, records, and document metadata are **never** stored in PostgreSQL. The PostgreSQL database is used **exclusively** for User Identity, Roles, and Granular Permission Policies (View & Download).
+2. **Live Ironclad API as Single Source of Truth**: All contract records and document attachments are fetched directly and in real time from the Ironclad API (`developer.ironcladapp.com`).
+3. **Automated OAuth2 Token Lifecycle**: The backend operates using only `IRONCLAD_CLIENT_ID` and `IRONCLAD_CLIENT_SECRET`. It autonomously negotiates OAuth access tokens and handles background token refresh transparently.
+4. **Strict Record Type Whitelisting**: Only the following three allowed record types are processed and presented in the UI:
+   - `Property Service Contract`
+   - `Purchase & Sales Agreement`
+   - `General Services Agreement`
+   All other record types are strictly filtered out at the service boundary.
+5. **Read & Download Only Contract Surface**: All contract mutation actions (upload, edit, delete, create) have been completely removed. Permitted operations on contracts are strictly **View Record Details** and **View/Download Document Attachments**.
+6. **PostgreSQL-Powered RBAC**: Full administrative management for Users (Add, Edit, Activate) and Roles (Add, Edit) with policies for View and Download permissions, and category-level authorizations.
+7. **Post-Login New Contract Notifications**: Real-time / polling notification layer that notifies the logged-in user whenever new contracts or agreements arrive from Ironclad.
 
 ```mermaid
 graph TD
-    User([End User / Web Browser]) -->|HTTP / HTTPS| FE[React + Vite Frontend\nPort 5173 / Port 80]
+    User([End User / Web Browser]) -->|HTTP / HTTPS| FE[React + Vite Frontend\n8 Dynamic Themes]
     
     subgraph Frontend Architecture
-        FE --> UI[Responsive UI Layer\n8 Dynamic Themes]
-        UI --> AuthCtx[Auth & RBAC Context]
-        UI --> BITool[Lite BI Tool & Charts]
+        FE --> UI[Responsive Grid & Detail Modal]
+        UI --> AuthCtx[AuthContext & RBAC Policy Guards]
+        UI --> NotifCenter[Live Notification Center\nNew Contract Alerts]
+        UI --> DocViewer[Document Viewer & Downloader]
         UI --> AxiosClient[Axios API Client\nBearer JWT + Correlation ID]
     end
 
-    AxiosClient -->|REST API / JSON| Gateway[FastAPI Application Gateway\nPort 8000]
+    AxiosClient -->|REST API / JSON| Gateway[FastAPI Backend Gateway\nPort 8000]
 
-    subgraph Backend Layered Architecture
-        Gateway --> MW[Logging Middleware\nCorrelation ID Injection]
-        MW --> Routers[API Routers /api/v1\nAuth | Contracts | Files | Roles | Users]
-        Routers --> Services[Service Layer\nBusiness Logic & Permissions Validation]
+    subgraph Backend Architecture
+        Gateway --> MW[Logging Middleware\nCorrelation ID & Tracing]
+        MW --> Security[RBAC Security Layer\nView & Download Policy Checkers]
         
-        Services --> AuthService[AuthService\nJWT & Password Hashing]
-        Services --> ContractService[ContractService\nToggleable Data Source Routing]
-        Services --> IroncladService[IroncladService\nREST API Client developer.ironcladapp.com]
-        Services --> S3Service[S3Service\nDocument Uploads / Presigned URLs]
+        Security --> UserRouter[API: /api/v1/users & /roles\nUser & Role CRUD]
+        Security --> AuthRouter[API: /api/v1/auth\nLogin, Token, Me]
+        Security --> ContractRouter[API: /api/v1/contracts\nLive Proxy & Stream]
         
-        ContractService --> Repositories[Repository Layer\nSQLAlchemy ORM Sessions]
-        Repositories --> Models[Database Models\nDeclarative Base]
+        UserRouter --> UserService[UserService & RoleService]
+        UserService --> PGRepo[SQLAlchemy Repositories]
+        PGRepo --> PostgreSQL[(PostgreSQL Database\nONLY: Users, Roles, Policies)]
+        
+        ContractRouter --> IroncladService[IroncladService\nLive API Client & OAuth Token Manager]
     end
 
-    Repositories -->|PostgreSQL Protocol| PG[(PostgreSQL 16 DB\nDocker Container)]
-    IroncladService -->|HTTPS / OAuth2| IroncladAPI[Ironclad Cloud API\ndeveloper.ironcladapp.com]
-    S3Service -->|Boto3 API| S3[(AWS S3 / MinIO Storage)]
+    subgraph Ironclad Cloud Platform
+        IroncladService -->|OAuth2 /oauth/token| ICToken[Ironclad Auth Endpoint\nClient Credentials & Refresh]
+        IroncladService -->|GET /records/ids| ICRecordsIds[Ironclad Records IDs API]
+        IroncladService -->|GET /records/:id| ICRecordDetail[Ironclad Record Detail API]
+        IroncladService -->|GET /records/:id/attachments/:key| ICAttachment[Ironclad Attachment Stream]
+    end
 ```
 
 ---
 
-## 2. Backend Layered Architecture (`API -> Service -> Repository -> Model`)
+## 2. Data Flow & Ironclad Live API Integration
 
-The FastAPI backend strictly enforces unidirectional dependency flow:
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as User (Browser)
+    participant FE as React Frontend
+    participant BE as FastAPI Gateway
+    participant RBAC as Security & RBAC Policy
+    participant ICS as IroncladService
+    participant IC as Ironclad API (developer.ironcladapp.com)
 
-```
-+-----------------------------------------------------------+
-|                      API Routers                          |
-|  (backend/app/api/v1/*.py)                                |
-|  - Validates request payload schemas (Pydantic)           |
-|  - Extracts authenticated user and correlation context    |
-|  - Enforces route-level RBAC role/permission dependencies |
-+-----------------------------+-----------------------------+
-                              | calls
-+-----------------------------v-----------------------------+
-|                     Service Layer                         |
-|  (backend/app/services/*.py)                              |
-|  - Encapsulates domain logic and business rules           |
-|  - Orchestrates transactions, data transforms, and sync   |
-|  - Interfaces with external APIs (Ironclad, AWS S3)       |
-+-----------------------------+-----------------------------+
-                              | calls
-+-----------------------------v-----------------------------+
-|                   Repository Layer                        |
-|  (backend/app/repositories/*.py)                          |
-|  - Manages database querying and persistence              |
-|  - Isolated from HTTP requests, headers, and web concerns |
-|  - Encapsulates SQLAlchemy queries, filtering, pagination |
-+-----------------------------+-----------------------------+
-                              | uses
-+-----------------------------v-----------------------------+
-|                      Model Layer                          |
-|  (backend/app/models/*.py)                                |
-|  - Pure SQLAlchemy Declarative Data Models                |
-|  - Defines DB tables, relationships, constraints, indexes |
-+-----------------------------------------------------------+
-```
+    Note over User,FE: 1. User Logs In
+    User->>FE: Enters credentials
+    FE->>BE: POST /api/v1/auth/login
+    BE-->>FE: JWT Token + Role + Permissions (e.g., contracts:view, contracts:download)
+    
+    Note over FE,BE: 2. Fetch Live Contracts (Whitelisted Types)
+    FE->>BE: GET /api/v1/contracts (Bearer JWT)
+    BE->>RBAC: Verify 'contracts:view' permission
+    RBAC-->>BE: Authorized
+    BE->>ICS: get_allowed_contracts()
+    ICS->>IC: POST /oauth/token (if token missing or expired)
+    IC-->>ICS: Access Token (bearer)
+    ICS->>IC: GET /public/api/v1/records/ids
+    IC-->>ICS: List of Record IDs
+    loop For each Record ID
+        ICS->>IC: GET /public/api/v1/records/{id}
+        IC-->>ICS: Record Payload (type, properties, attachments)
+        ICS->>ICS: Filter: Is record_type in [Property Service Contract, Purchase & Sales Agreement, General Services Agreement]?
+    end
+    ICS-->>BE: Filtered list of allowed contracts
+    BE-->>FE: Return contracts list (JSON)
+    FE->>User: Display responsive grid with contract IDs & summary
 
-### Directory Structure & Responsibilities
+    Note over User,FE: 3. View Contract Details & Attachments
+    User->>FE: Click contract card in grid
+    FE->>BE: GET /api/v1/contracts/{id}
+    BE->>RBAC: Verify 'contracts:view' permission
+    BE->>ICS: get_record_detail(id)
+    ICS->>IC: GET /public/api/v1/records/{id}
+    IC-->>ICS: Record metadata & attachments array
+    ICS-->>BE: Detailed agreement schema
+    BE-->>FE: Agreement details
+    FE->>User: Render Detailed View Modal with document list
 
-```
-backend/
-├── app/
-│   ├── api/
-│   │   └── v1/
-│   │       ├── auth.py          # /login, /me, /refresh
-│   │       ├── contracts.py     # /contracts CRUD, /contracts/sync-ironclad
-│   │       ├── files.py         # /files/upload, /files/:id/download, /files
-│   │       ├── roles.py         # /roles, /roles/:id, /permissions
-│   │       ├── users.py         # /users CRUD, role assignment
-│   │       └── health.py        # /health, system readiness probes
-│   ├── core/
-│   │   ├── config.py            # Pydantic BaseSettings externalized config
-│   │   ├── database.py          # SQLAlchemy engine, sessionmaker, get_db
-│   │   ├── logging.py           # Structured JSON & console centralized logger
-│   │   └── security.py          # Bcrypt hashing, JWT encode/decode, RBAC guards
-│   ├── middleware/
-│   │   └── logging_middleware.py # Request tracing, Correlation ID injection
-│   ├── models/
-│   │   ├── base.py              # DeclarativeBase, TimestampMixin
-│   │   ├── user.py              # User model (id, email, hashed_pwd, role, permissions)
-│   │   ├── contract.py          # Contract model (Ironclad workflows/records mirror)
-│   │   ├── document.py          # Document model (S3 keys, metadata, contract FK)
-│   │   └── role_permission.py   # Role & Permission definition models
-│   ├── repositories/
-│   │   ├── base.py              # Generic CRUD repository interface
-│   │   ├── contract_repo.py     # Contract queries, filtering, status grouping
-│   │   └── user_repo.py         # User lookups, role & permission updates
-│   ├── schemas/
-│   │   ├── common.py            # Generic response envelope, pagination
-│   │   ├── user.py              # UserCreate, UserResponse, UserUpdate
-│   │   ├── contract.py          # ContractCreate, ContractResponse, ContractFilter
-│   │   ├── file.py              # FileUploadResponse, DocumentMetadata
-│   │   └── role.py              # RoleUpdate, PermissionMatrix
-│   ├── services/
-│   │   ├── auth_service.py      # Authentication, token generation, user verification
-│   │   ├── contract_service.py  # Contract lifecycle, source routing (PG vs Ironclad)
-│   │   ├── ironclad_service.py  # HTTP client for developer.ironcladapp.com
-│   │   ├── s3_service.py        # AWS S3 / MinIO storage and presigned download URLs
-│   │   └── user_service.py      # User management, role elevation
-│   └── main.py                  # FastAPI app factory, CORS, middleware, router mount
-├── scripts/
-│   └── init_db.py               # Table creation, sample seeding with 4 roles
-├── .env.example
-├── Dockerfile
-└── requirements.txt
+    Note over User,FE: 4. View or Download Document
+    User->>FE: Click "Download Attachment" or "View Document"
+    FE->>BE: GET /api/v1/contracts/{id}/attachments/{key}?disposition=inline|attachment
+    BE->>RBAC: Verify 'contracts:download' (or 'contracts:view') permission
+    RBAC-->>BE: Authorized
+    BE->>ICS: stream_attachment(id, key)
+    ICS->>IC: GET /public/api/v1/records/{id}/attachments/{key}
+    IC-->>ICS: Raw file stream / bytes & content-type
+    ICS-->>BE: Stream bytes
+    BE-->>FE: Binary file stream with Content-Disposition
+    FE->>User: Browser opens file or triggers download
+
+    Note over FE,BE: 5. Background Notification Polling
+    FE->>BE: GET /api/v1/contracts/notifications/check?since={timestamp}
+    BE->>ICS: check_new_records(since)
+    ICS-->>BE: New record alerts (if any)
+    BE-->>FE: [{id, name, type, arrived_at}]
+    FE->>User: Toast notification & bell indicator: "New Agreement Arrived!"
 ```
 
 ---
 
-## 3. Frontend Architecture (React + Vite + TypeScript)
+## 3. Storage Separation & PostgreSQL Schema Design
 
-The frontend is constructed with modern React 18, Vite tooling, and TypeScript:
+Under the new architecture, **no contracts, documents, or workflows are stored in PostgreSQL**. The database schema is streamlined strictly for:
+1. `users`: Identity, authentication credentials, assigned role key, direct permission overrides, and status.
+2. `role_definitions`: Role keys (`admin`, `manager`, `editor`, `viewer`, custom roles), display names, descriptions, and allowed permission policies.
 
+```sql
+-- PostgreSQL Table: users
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+    email VARCHAR(255) UNIQUE NOT NULL,
+    hashed_password VARCHAR(255) NOT NULL,
+    full_name VARCHAR(255) NOT NULL,
+    role VARCHAR(50) NOT NULL DEFAULT 'viewer',
+    permissions JSONB NOT NULL DEFAULT '[]'::jsonb,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- PostgreSQL Table: role_definitions
+CREATE TABLE role_definitions (
+    id SERIAL PRIMARY KEY,
+    role_key VARCHAR(50) UNIQUE NOT NULL,
+    display_name VARCHAR(100) NOT NULL,
+    description VARCHAR(255) NOT NULL,
+    default_permissions JSONB NOT NULL DEFAULT '[]'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
 ```
-frontend/
-├── src/
-│   ├── api/
-│   │   └── client.ts            # Axios singleton with auto Bearer JWT & Correlation ID
-│   ├── context/
-│   │   ├── AuthContext.tsx      # Current user state, login, logout, permission checks
-│   │   └── ThemeContext.tsx     # 8-theme runtime switcher with localStorage persist
-│   ├── components/
-│   │   ├── Navbar.tsx           # Global header, theme dropdown, profile badge
-│   │   ├── Footer.tsx           # Application status, version, links
-│   │   ├── ProtectedRoute.tsx   # Route guards for authentication & required permissions
-│   │   ├── ThemeSelector.tsx    # Visual theme picker with color preview swatches
-│   │   ├── ContractCard.tsx     # Responsive card view component
-│   │   ├── ContractModal.tsx    # Contract creation / editing modal
-│   │   ├── DocumentViewer.tsx   # PDF / document preview & download handler
-│   │   ├── BiTool.tsx           # Interactive charts and KPI metrics tab
-│   │   └── RoleManagerModal.tsx # Admin interface for editing user roles and permissions
-│   ├── pages/
-│   │   ├── Home.tsx             # Public landing & feature showcase
-│   │   ├── SignIn.tsx           # Authentication page with demo quick-login credentials
-│   │   ├── Dashboard.tsx        # Main application dashboard (Grid, Table, Docs, BI Tabs)
-│   │   └── AdminRoles.tsx       # Dedicated Admin RBAC Management screen
-│   ├── styles/
-│   │   └── index.css            # CSS variables for all 8 themes, utility classes
-│   ├── types/
-│   │   ├── index.ts             # TypeScript interfaces for Contract, User, Role, Document
-│   │   └── theme.ts             # Theme enum and token contracts
-│   ├── App.tsx                  # React Router setup & Provider wrapping
-│   └── main.tsx                 # DOM Entrypoint
-├── index.html
-├── package.json
-├── tsconfig.json
-├── vite.config.ts
-├── Dockerfile
-└── .env.example
-```
+
+### Permission Policy Matrix:
+| Permission Key | Description | Applicable Roles (Default) |
+|---|---|---|
+| `contracts:view` | View allowed contract list and inspect detailed agreement view | `admin`, `manager`, `editor`, `viewer` |
+| `contracts:download` | Download and stream original document attachments | `admin`, `manager`, `editor` |
+| `users:manage` | Add new users, edit user profile, assign roles & permissions | `admin` |
+| `roles:manage` | Add new roles, edit role permissions and policies | `admin` |
 
 ---
 
-## 4. Centralized Logging & Correlation Tracing
+## 4. Ironclad Live API Client Architecture
 
-Each HTTP request entering the application lifecycle is tagged with a unique **Correlation ID** (`X-Correlation-ID`):
+The `IroncladService` (`backend/app/services/ironclad_service.py`) encapsulates all communication with `developer.ironcladapp.com`:
 
-```
-Client Request
-      |
-      v
-LoggingMiddleware
-      |-- 1. Extract 'X-Correlation-ID' header or generate UUIDv4
-      |-- 2. Store Correlation ID in contextvars (ContextVar)
-      |-- 3. Log incoming request: [CORR_ID] [METHOD] [PATH] [CLIENT_IP]
-      v
-API Route -> Service -> Repository
-      |-- 4. All logger.info/error calls automatically attach [CORR_ID]
-      v
-LoggingMiddleware Response
-      |-- 5. Calculate request duration (ms)
-      |-- 6. Inject 'X-Correlation-ID' into HTTP Response headers
-      |-- 7. Log completion: [CORR_ID] [STATUS] [DURATION_MS]
-      v
-Client receives response with X-Correlation-ID header
-```
+### 4.1 Token Lifecycle Management:
+- **Client Credentials Flow**: Uses `IRONCLAD_CLIENT_ID` and `IRONCLAD_CLIENT_SECRET`.
+- **Token Cache**: Access token cached in-memory with automatic expiration tracking.
+- **Refresh Flow**: When token is within 60 seconds of expiration (or on HTTP 401), the service automatically negotiates a fresh access token using either the refresh token or client credentials.
 
-### Log Output Format
-Logs support both human-readable colored output (development) and structured JSON (production):
-```json
-{
-  "timestamp": "2026-10-13T22:00:00.123Z",
-  "level": "INFO",
-  "correlation_id": "c7a82b9e-4e6f-402a-bf3e-9080b0369a41",
-  "logger": "app.api.v1.contracts",
-  "message": "Fetched 24 contracts successfully",
-  "user_id": 1,
-  "execution_time_ms": 14.2
+### 4.2 API Endpoint Mapping:
+1. `GET /public/api/v1/records/ids`: Fetches array of all record IDs.
+2. `GET /public/api/v1/records/{id}`: Fetches individual record details (properties, schema, attachments).
+3. `GET /public/api/v1/records/{id}/attachments/{key}`: Proxies the binary document file stream directly to the client.
+
+### 4.3 Whitelisted Record Types:
+Incoming records are checked against the whitelist:
+```python
+ALLOWED_RECORD_TYPES = {
+    "Property Service Contract",
+    "Purchase & Sales Agreement",
+    "General Services Agreement"
 }
 ```
+Any record whose type does not match one of these three is automatically discarded before returning to the UI.
+
+### 4.4 Live API Error Handling & Validation:
+Requests directly hit the Ironclad Public API. If the Client ID and Client Secret are invalid or unauthorized, the client receives explicit HTTP 401/403 status responses, and the token manager proactively refreshes or logs actionable authentication error details. No mock or dummy contracts are returned or stored.
 
 ---
 
-## 5. Ironclad API Integration & Toggleable Architecture
-
-The system supports two complementary modes of operation controlled via `DATA_SOURCE`:
-
-### Mode A: Local PostgreSQL Database (`DATA_SOURCE=postgres`)
-- Queries are executed against local PostgreSQL tables (`contracts`, `contract_documents`).
-- Guarantees zero latency and offline capability.
-- Allows local CRUD operations, editing, and status progression.
-
-### Mode B: Direct Ironclad API (`DATA_SOURCE=ironclad`)
-- Proxies requests to `https://ironcladapp.com/api/v1/` using `IRONCLAD_CLIENT_ID` and `IRONCLAD_CLIENT_SECRET`.
-- Transforms Ironclad workflow schemas into application domain models.
-- Graceful fallback: If external API calls fail or offline mock mode is active, the service falls back to local data with structured notifications.
-
-### Sync Pipeline (`POST /api/v1/contracts/sync-ironclad`)
-- On-demand or scheduled synchronization pull from Ironclad API.
-- Upserts contracts, workflow stages, document attachment links, and metadata into PostgreSQL.
-
----
-
-## 6. Document Management & S3 Architecture
+## 5. Frontend UI/UX Architecture
 
 ```
-Document Upload Flow:
-Client ---> POST /api/v1/files/upload (Multipart FormData)
-         ---> S3Service validates mime-type, file size, permissions
-         ---> Uploads object to S3 / MinIO (bucket: 'ironclad-documents')
-         ---> Stores Document Record in PostgreSQL with S3 Key & metadata
-         ---> Returns DocumentResponse with download URL
-
-Document Download Flow:
-Client ---> GET /api/v1/files/{file_id}/download
-         ---> Permission Check (e.g., 'read' or 'admin')
-         ---> S3Service generates secure presigned URL or streams object
-         ---> Client accesses document securely
+frontend/src/
+├── api/
+│   └── client.ts            # Axios singleton with Bearer token & correlation ID interceptors
+├── context/
+│   ├── AuthContext.tsx      # Authentication, user state, permission guards (`hasPermission`)
+│   └── ThemeContext.tsx     # 8 Dynamic themes runtime switcher
+├── components/
+│   ├── Navbar.tsx           # Global header with theme selector, notification bell, user profile
+│   ├── NotificationCenter.tsx # Live notifications for newly arrived contracts
+│   ├── ContractDetailModal.tsx# Clean modal view for detailed agreement & documents
+│   ├── DocumentList.tsx     # Attachment list with View & Download permission-governed buttons
+│   ├── ThemeSelector.tsx    # 8-theme visual palette switcher
+│   └── ProtectedRoute.tsx   # Route authorization guard
+└── pages/
+    ├── Dashboard.tsx        # Responsive grid of allowed contract IDs & detailed view modal
+    ├── AdminRoles.tsx       # User & Role administration (Add/Edit users, Add/Edit roles & permissions)
+    ├── SignIn.tsx           # Login page with 1-click test credentials
+    └── Home.tsx             # System architecture & overview
 ```
 
----
-
-## 7. Role-Based Access Control (RBAC) Specification
-
-Authentication uses JWT Bearer tokens signed with HMAC-SHA256. Permissions are evaluated on every sensitive operation:
-
-| Role | Default Permissions | Dashboard Tabs | Contract Create | Contract Edit | File Upload | File Download | Admin RBAC Tab |
-|------|--------------------|----------------|-----------------|---------------|-------------|---------------|----------------|
-| **Admin** | `read, write, edit, delete, admin` | Grid, Table, Docs, BI, Admin | Yes | Yes | Yes | Yes | Yes |
-| **Manager** | `read, write, edit` | Grid, Table, Docs, BI | Yes | Yes | Yes | Yes | No |
-| **Editor** | `read, write, edit` | Grid, Table, Docs, BI | Yes | Yes | Yes | Yes (Non-confidential) | No |
-| **Viewer** | `read` | Grid, Table, Docs, BI | No | No | No | Read-only previews | No |
-
----
-
-## 8. Ironclad Data Lake & Data Warehouse Integration Architecture
-
-Reference: [Ironclad Data Lake / Data Warehouse Integration Guide](https://developer.ironcladapp.com/docs/data-lakedata-warehouse-integration)
-
-```
-+----------------------------------------------------------------------------------------------------+
-|                                    Ironclad Cloud Platform                                         |
-|                                                                                                    |
-|  +-----------------------------+                     +------------------------------------------+  |
-|  |     Workflows API           |                     |               Records API                |  |
-|  |  /public/api/v1/workflows   |                     |  /public/api/v1/records?lastUpdated=...  |  |
-|  +--------------+--------------+                     +--------------------+---------------------+  |
-+-----------------|---------------------------------------------------------|------------------------+
-                  |                                                         |
-                  | Incremental Extract (ETL Pipeline)                      |
-                  +----------------------------+----------------------------+
-                                               |
-                                               v
-+----------------------------------------------------------------------------------------------------+
-|                         Ironclad Contract Hub Normalization Pipeline                               |
-|                                                                                                    |
-|  +----------------------------------------------------------------------------------------------+  |
-|  | Normalization & Transformation Engine (backend/app/services/ironclad_service.py)             |  |
-|  |                                                                                              |  |
-|  |  Record Property Path                  Normalized Contract Schema       Data Warehouse Type  |  |
-|  |  -----------------------------------   --------------------------       -------------------  |  |
-|  |  properties.agreementDate.value   -->  agreement_date                   TIMESTAMP (UTC)      |  |
-|  |  properties.startDate.value       -->  start_date                       TIMESTAMP (UTC)      |  |
-|  |  properties.expirationDate.value  -->  completion_date                  TIMESTAMP (UTC)      |  |
-|  |  lastUpdated                      -->  last_synced_date                 TIMESTAMP (UTC)      |  |
-|  |  properties.signedDate.value      -->  signed_date                      TIMESTAMP (UTC)      |  |
-|  |  properties.renewalNotice.value   -->  renewal_notice_date              TIMESTAMP (UTC)      |  |
-|  |  links / relatedRecords           -->  related_records (JSONB)          JSONB ARRAY          |  |
-|  +----------------------------------------------------------------------------------------------+  |
-+----------------------------------------------+-----------------------------------------------------+
-                                               |
-                                               v
-+----------------------------------------------------------------------------------------------------+
-|                                PostgreSQL 16 Data Lake Layer                                       |
-|                                                                                                    |
-|  Table: contracts                                                                                  |
-|  - id: BIGSERIAL PRIMARY KEY                                                                       |
-|  - ironclad_id: VARCHAR(100) UNIQUE INDEX                                                          |
-|  - title: VARCHAR(255) NOT NULL                                                                    |
-|  - status: VARCHAR(50) [draft | in_review | out_for_signature | signed | archived]                |
-|  - agreement_date: TIMESTAMP WITH TIME ZONE                                                        |
-|  - start_date: TIMESTAMP WITH TIME ZONE                                                            |
-|  - completion_date: TIMESTAMP WITH TIME ZONE                                                       |
-|  - signed_date: TIMESTAMP WITH TIME ZONE                                                           |
-|  - last_synced_date: TIMESTAMP WITH TIME ZONE                                                      |
-|  - renewal_notice_date: TIMESTAMP WITH TIME ZONE                                                    |
-|  - related_records: JSONB DEFAULT '[]'                                                             |
-+----------------------------------------------+-----------------------------------------------------+
-                                               |
-                                               v
-+----------------------------------------------------------------------------------------------------+
-|                         Computed Lifecycle & Tracking Analytics (Pydantic / UI)                    |
-|                                                                                                    |
-|  - current_date:      Dynamic evaluation timestamp (utcnow())                                      |
-|  - days_remaining:    (completion_date - current_date).days                                        |
-|  - progress_percent:   min(100, max(0, ((current_date - start_date) / total_term) * 100))          |
-|  - tracking_status:   'active' | 'expiring_soon' (<30d) | 'completed' | 'expired'                  |
-+----------------------------------------------------------------------------------------------------+
-```
-
-### 8.1 Key Schema Properties & Normalization Rules
-
-1. **Agreement Date (`agreement_date`)**:
-   - Represents the formal execution or agreement timestamp from Ironclad's `properties.agreementDate.value`.
-   - Used for compliance auditing and initial baseline metrics.
-2. **Start Date (`start_date`)**:
-   - The effective inception date when obligations, software access, or service terms commence.
-   - Defaults to `agreement_date` or record creation time if not explicitly defined in the template.
-3. **Reference Current Date (`current_date`)**:
-   - Evaluated dynamically on the server (`datetime.utcnow()`) to prevent clock skew between client machines.
-   - Provides an authoritative benchmark for computing remaining term, expiration deadlines, and milestone alerts.
-4. **Target Completion Date (`completion_date`)**:
-   - The scheduled or actual contract completion date (`properties.expirationDate` or `completionDate`).
-   - Powers early renewal notifications (typically 30, 60, or 90 days prior).
-5. **Incremental Sync via `lastUpdated` Filter**:
-   - Implements Ironclad's recommended Data Warehouse sync pattern:
-     ```
-     GET /public/api/v1/records?lastUpdated=2026-10-13T00:00:00Z
-     ```
-   - Eliminates redundant payload transfer, reduces API rate limit consumption, and enables continuous micro-batch ETL pipelines.
-
+### Obsolete Code Removed:
+- Contract creation modal (`ContractModal.tsx`) & creation endpoints
+- Contract update & deletion endpoints
+- S3 upload widgets & upload endpoints
+- Database contract persistence and sync-to-db logic

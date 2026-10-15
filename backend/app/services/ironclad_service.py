@@ -294,61 +294,7 @@ class IroncladService:
         return allowed_contracts
 
     # -------------------------------------------------------------------------
-    # 4. Retrieve an Attachment Stream: GET /records/{id}/attachments/{key}
-    # -------------------------------------------------------------------------
-    async def get_attachment_stream(
-        self,
-        record_id: str,
-        attachment_key: str,
-        user_email: Optional[str] = None
-    ) -> Tuple[Optional[bytes], str, str]:
-        clean_key = attachment_key or "sourceDocument"
-        filename = clean_key.split("/")[-1] if "/" in clean_key else clean_key
-        if not filename.endswith(".pdf"):
-            filename = f"{filename}.pdf"
-        content_type = "application/pdf"
-
-        if not self.token_manager.has_credentials():
-            logger.error("Cannot retrieve attachment: Ironclad credentials not configured.")
-            return None, filename, content_type
-
-        endpoint = f"{self.api_root}/records/{record_id}/attachments/{attachment_key}"
-
-        async def _call(verify_ssl: bool):
-            headers = await self._get_auth_headers(user_email=user_email)
-            async with httpx.AsyncClient(timeout=30.0, verify=verify_ssl) as client:
-                return await client.get(endpoint, headers=headers)
-
-        try:
-            try:
-                res = await _call(settings.VERIFY_SSL)
-            except (httpx.ConnectError, ssl.SSLCertVerificationError):
-                res = await _call(False)
-
-            if res.status_code == 200:
-                ct = res.headers.get("content-type", content_type)
-                cd = res.headers.get("content-disposition", "")
-                if "filename=" in cd:
-                    parts = cd.split("filename=")
-                    if len(parts) > 1:
-                        parsed_fn = parts[1].strip('"\'; ')
-                        if parsed_fn:
-                            filename = parsed_fn
-                return res.content, filename, ct
-            elif res.status_code == 401:
-                self.token_manager.access_token = None
-                retry_res = await _call(False)
-                if retry_res.status_code == 200:
-                    ct = retry_res.headers.get("content-type", content_type)
-                    return retry_res.content, filename, ct
-            logger.error(f"Ironclad GET /records/{record_id}/attachments/{attachment_key} returned HTTP {res.status_code}: {res.text}")
-            return None, filename, content_type
-        except Exception as exc:
-            logger.error(f"Failed to retrieve attachment '{attachment_key}' on record '{record_id}': {exc}", exc_info=True)
-            return None, filename, content_type
-
-    # -------------------------------------------------------------------------
-    # 5. Check Notifications for Newly Arrived Agreements
+    # 4. Check Notifications for Newly Arrived Agreements
     # -------------------------------------------------------------------------
     async def check_new_agreements(self, since_iso: Optional[str] = None, user_email: Optional[str] = None) -> List[Dict[str, Any]]:
         all_contracts = await self.fetch_allowed_contracts(user_email=user_email)
@@ -383,7 +329,7 @@ class IroncladService:
         return new_items
 
     # -------------------------------------------------------------------------
-    # 6. Record Normalization (Handles dynamic Postman schema)
+    # 5. Record Normalization (Handles dynamic Postman schema with direct href)
     # -------------------------------------------------------------------------
     def normalize_record(self, raw_item: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         if not raw_item or not isinstance(raw_item, dict):
@@ -466,7 +412,7 @@ class IroncladService:
         contracting_entity = get_prop("contractingEntityBh")
         agreement_type = get_prop("serviceContractAgreementTypeBh") or get_prop("agreementType")
 
-        # Attachments map parsing
+        # Attachments map parsing: Preserving original direct Ironclad href
         raw_attachments = raw_item.get("attachments", {})
         clean_attachments = []
 
@@ -475,6 +421,7 @@ class IroncladService:
                 if isinstance(att_data, dict):
                     fn = att_data.get("filename") or f"{name}.pdf"
                     ct = att_data.get("contentType") or "application/pdf"
+                    direct_href = att_data.get("href") or ""
                     clean_attachments.append({
                         "id": str(att_key),
                         "key": str(att_key),
@@ -484,9 +431,10 @@ class IroncladService:
                         "file_size": att_data.get("fileSize", 0),
                         "file_hash": att_data.get("fileHash"),
                         "hash_algorithm": att_data.get("hashAlgorithm", "sha256"),
-                        "url": f"/api/v1/contracts/{record_uuid}/attachments/{att_key}",
-                        "view_url": f"/api/v1/contracts/{record_uuid}/attachments/{att_key}?disposition=inline",
-                        "download_url": f"/api/v1/contracts/{record_uuid}/attachments/{att_key}?disposition=attachment",
+                        "href": direct_href,
+                        "url": direct_href,
+                        "view_url": direct_href,
+                        "download_url": direct_href,
                         "can_view": True,
                         "can_download": True
                     })
@@ -495,6 +443,7 @@ class IroncladService:
                 if isinstance(att, dict):
                     fn = att.get("name") or att.get("filename") or f"Document_{idx+1}.pdf"
                     key = att.get("key") or str(idx+1)
+                    direct_href = att.get("href") or att.get("url") or ""
                     clean_attachments.append({
                         "id": key,
                         "key": key,
@@ -504,9 +453,10 @@ class IroncladService:
                         "file_size": att.get("fileSize", 0),
                         "file_hash": att.get("fileHash"),
                         "hash_algorithm": att.get("hashAlgorithm", "sha256"),
-                        "url": f"/api/v1/contracts/{record_uuid}/attachments/{key}",
-                        "view_url": f"/api/v1/contracts/{record_uuid}/attachments/{key}?disposition=inline",
-                        "download_url": f"/api/v1/contracts/{record_uuid}/attachments/{key}?disposition=attachment",
+                        "href": direct_href,
+                        "url": direct_href,
+                        "view_url": direct_href,
+                        "download_url": direct_href,
                         "can_view": True,
                         "can_download": True
                     })

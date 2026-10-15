@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { Contract, ContractAttachment } from '../types';
+import { AttachmentViewerModal } from '../components/AttachmentViewerModal';
 import { useAuth } from '../context/AuthContext';
 import { apiClient } from '../api/client';
 import {
@@ -35,6 +36,7 @@ export const ContractDetail: React.FC = () => {
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [copiedLinkKey, setCopiedLinkKey] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [previewAttachment, setPreviewAttachment] = useState<ContractAttachment | null>(null);
 
   const fetchContractDetail = async () => {
     if (!id) return;
@@ -63,7 +65,7 @@ export const ContractDetail: React.FC = () => {
   };
 
   const copyDocumentLink = (url: string, keyName: string) => {
-    const fullUrl = `${window.location.origin}${url}`;
+    const fullUrl = url.startsWith('http') ? url : `${window.location.origin}${url}`;
     navigator.clipboard.writeText(fullUrl);
     setCopiedLinkKey(keyName);
     setTimeout(() => setCopiedLinkKey(null), 2000);
@@ -71,7 +73,7 @@ export const ContractDetail: React.FC = () => {
 
   const handleViewDocument = (att: ContractAttachment) => {
     if (!att.can_view || !att.view_url) return;
-    window.open(att.view_url, '_blank');
+    setPreviewAttachment(att);
   };
 
   const handleDownloadDocument = (att: ContractAttachment) => {
@@ -197,21 +199,7 @@ export const ContractDetail: React.FC = () => {
           </div>
         </div>
 
-        <button
-          onClick={fetchContractDetail}
-          className="btn btn-secondary"
-          style={{
-            padding: '0.45rem 0.85rem',
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: '0.4rem',
-            fontSize: '0.825rem',
-          }}
-          title="Refresh live from Ironclad API"
-        >
-          <RefreshCw size={14} />
-          <span>Sync from Ironclad</span>
-        </button>
+
       </div>
 
       {/* Main Hero Card: Contract Title, Badges, & Live Status */}
@@ -348,14 +336,7 @@ export const ContractDetail: React.FC = () => {
       </div>
 
       {/* 4-Metric Key Overview Bar */}
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
-          gap: '1rem',
-          marginBottom: '1.5rem',
-        }}
-      >
+      <div className="summary-cards-grid">
         <div className="card" style={{ padding: '1.15rem', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-card)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-muted)', fontSize: '0.75rem', marginBottom: '0.4rem' }}>
             <Building2 size={15} style={{ color: 'var(--accent-primary)' }} />
@@ -403,13 +384,7 @@ export const ContractDetail: React.FC = () => {
       </div>
 
       {/* Main Grid: Left Column Properties & Terms | Right Column Attachments & Permission Control */}
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'minmax(0, 1.4fr) minmax(0, 1fr)',
-          gap: '1.5rem',
-        }}
-      >
+      <div className="contract-detail-grid">
         {/* LEFT COLUMN: Properties & Lifecycle Details */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
           {/* Agreement Lifecycle & Key Dates */}
@@ -429,13 +404,7 @@ export const ContractDetail: React.FC = () => {
               </h2>
             </div>
 
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: '1fr 1fr',
-                gap: '1rem',
-              }}
-            >
+            <div className="lifecycle-grid">
               <div style={{ padding: '0.85rem', borderRadius: 'var(--radius-sm)', backgroundColor: 'var(--bg-input)', border: '1px solid var(--border-color)' }}>
                 <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', display: 'block', marginBottom: '0.25rem' }}>
                   Formal Agreement Date
@@ -863,6 +832,14 @@ export const ContractDetail: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Responsive In-App Document Viewer Popup Modal */}
+      <AttachmentViewerModal
+        attachment={previewAttachment}
+        isOpen={!!previewAttachment}
+        onClose={() => setPreviewAttachment(null)}
+        canDownload={canDownloadAttachments}
+      />
     </div>
   );
 };

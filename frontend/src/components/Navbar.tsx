@@ -34,7 +34,7 @@ export const Navbar: React.FC<NavbarProps> = ({ onSelectContract }) => {
     >
       <div className="container" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: '64px' }}>
         {/* Brand Logo & Name */}
-        <Link to="/" style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+        <Link to="/dashboard" style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
           <div
             style={{
               width: '36px',
@@ -61,27 +61,13 @@ export const Navbar: React.FC<NavbarProps> = ({ onSelectContract }) => {
 
         {/* Navigation Tabs */}
         <nav style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <Link
-            to="/"
-            style={{
-              padding: '0.45rem 0.85rem',
-              fontSize: '0.875rem',
-              fontWeight: 500,
-              borderRadius: 'var(--radius-sm)',
-              color: isActive('/') ? 'var(--accent-primary)' : 'var(--text-secondary)',
-              backgroundColor: isActive('/') ? 'var(--accent-soft)' : 'transparent',
-            }}
-          >
-            Overview
-          </Link>
-
           {isAuthenticated && (
             <Link
               to="/dashboard"
               style={{
                 padding: '0.45rem 0.85rem',
                 fontSize: '0.875rem',
-                fontWeight: 500,
+                fontWeight: 600,
                 borderRadius: 'var(--radius-sm)',
                 color: isActive('/dashboard') ? 'var(--accent-primary)' : 'var(--text-secondary)',
                 backgroundColor: isActive('/dashboard') ? 'var(--accent-soft)' : 'transparent',
@@ -95,8 +81,8 @@ export const Navbar: React.FC<NavbarProps> = ({ onSelectContract }) => {
             </Link>
           )}
 
-          {/* Conditional Admin Only Link */}
-          {isAuthenticated && (user?.role === 'admin' || user?.permissions?.includes('users:manage') || user?.permissions?.includes('admin')) && (
+          {/* User Management Link for Admin, Manager, and Editor */}
+          {isAuthenticated && (['admin', 'manager', 'editor'].includes(user?.role || '')) && (
             <Link
               to="/admin/roles"
               style={{

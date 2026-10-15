@@ -1,6 +1,5 @@
 from typing import List, Optional, Dict, Any
-from urllib.parse import quote
-from fastapi import APIRouter, Depends, Query, HTTPException, status, Response
+from fastapi import APIRouter, Depends, Query, HTTPException, status
 from app.core.security import require_permission, get_current_user
 from app.models.user import User
 from app.schemas.contract import (
@@ -14,9 +13,8 @@ router = APIRouter(prefix="/contracts", tags=["Contracts (Ironclad Live)"])
 
 def filter_attachments_for_user(attachments: List[Dict[str, Any]], record_id: str, user: User) -> List[Dict[str, Any]]:
     """
-    Server-side permission filter:
-    Evaluates current user's permissions and only provides download/view action URLs
-    if the user is explicitly authorized.
+    Evaluates current user's permissions and passes through the exact Ironclad href
+    for view and download actions.
     """
     user_perms = set(user.permissions or [])
     is_admin = user.role == "admin"
@@ -26,21 +24,22 @@ def filter_attachments_for_user(attachments: List[Dict[str, Any]], record_id: st
     filtered = []
     for att in attachments:
         item = dict(att)
-        att_key = item.get("key", "")
-        safe_key = quote(str(att_key), safe="")
+        # Use the direct link present in the Ironclad record
+        ironclad_href = item.get("href") or item.get("url") or ""
 
         item["can_view"] = can_view
         item["can_download"] = can_download
+        item["href"] = ironclad_href
 
         if can_view:
-            item["view_url"] = f"/api/v1/contracts/{record_id}/attachments/{safe_key}?disposition=inline"
-            item["url"] = item["view_url"]
+            item["view_url"] = ironclad_href
+            item["url"] = ironclad_href
         else:
             item["view_url"] = None
             item["url"] = None
 
         if can_download:
-            item["download_url"] = f"/api/v1/contracts/{record_id}/attachments/{safe_key}?disposition=attachment"
+            item["download_url"] = ironclad_href
         else:
             item["download_url"] = None
 
@@ -175,7 +174,7 @@ async def get_contract_detail(
     """
     Retrieves full details for a single Ironclad Record: GET /records/{id}.
     OAuth Scope: public.records.readRecords
-    Filters attachments according to user's permissions directly on backend.
+    Uses the direct Ironclad attachment link.
     """
     record = await ironclad_service.fetch_record_by_id(record_id, user_email=current_user.email)
     if not record:
@@ -202,51 +201,3 @@ async def get_contract_detail(
     record["attachments"] = filter_attachments_for_user(record.get("attachments", []), record["id"], current_user)
 
     return record
-
-@router.get("/{record_id}/attachments/{attachment_key:path}")
-async def stream_contract_attachment(
-    record_id: str,
-    attachment_key: str,
-    disposition: str = Query("inline", pattern="^(inline|attachment)$"),
-    current_user: User = Depends(get_current_user)
-):
-    """
-    Retrieves and streams an attachment on a record: GET /records/{id}/attachments/{key}.
-    - If disposition=attachment: Requires 'contracts:download' permission.
-    - If disposition=inline: Requires 'contracts:view' permission.
-    """
-    user_perms = set(current_user.permissions or [])
-    is_admin = current_user.role == "admin"
-
-    if not is_admin:
-        if disposition == "attachment":
-            if not user_perms.intersection({"contracts:download", "download"}):
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Forbidden: You do not have permission to download contract documents."
-                )
-        else:
-            if not user_perms.intersection({"contracts:view", "view", "read", "contracts:download", "download"}):
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Forbidden: You do not have permission to view contract documents."
-                )
-
-    file_bytes, filename, content_type = await ironclad_service.get_attachment_stream(
-        record_id=record_id,
-        attachment_key=attachment_key,
-        user_email=current_user.email
-    )
-    if not file_bytes:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Document attachment not found or empty on Ironclad."
-        )
-
-    headers = {
-        "Content-Disposition": f'{disposition}; filename="{filename}"',
-        "Content-Type": content_type,
-        "Cache-Control": "no-cache"
-    }
-
-    return Response(content=file_bytes, media_type=content_type, headers=headers)

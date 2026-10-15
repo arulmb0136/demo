@@ -6,7 +6,6 @@ import { LoadingProvider } from './context/LoadingContext';
 import { Navbar } from './components/Navbar';
 import { Footer } from './components/Footer';
 import { ProtectedRoute } from './components/ProtectedRoute';
-import { Home } from './pages/Home';
 import { SignIn } from './pages/SignIn';
 import { Dashboard } from './pages/Dashboard';
 import { ContractDetail } from './pages/ContractDetail';
@@ -22,7 +21,8 @@ export const App: React.FC = () => {
               <Navbar />
               <main style={{ flex: 1 }}>
                 <Routes>
-                  <Route path="/" element={<Home />} />
+                  {/* Direct Dashboard routing - Overview page removed */}
+                  <Route path="/" element={<Navigate to="/dashboard" replace />} />
                   <Route path="/signin" element={<SignIn />} />
                   <Route
                     path="/dashboard"
@@ -43,12 +43,12 @@ export const App: React.FC = () => {
                   <Route
                     path="/admin/roles"
                     element={
-                      <ProtectedRoute requiredRole="admin">
+                      <ProtectedRoute requiredRole={['admin', 'manager', 'editor']}>
                         <AdminRoles />
                       </ProtectedRoute>
                     }
                   />
-                  <Route path="*" element={<Navigate to="/" replace />} />
+                  <Route path="*" element={<Navigate to="/dashboard" replace />} />
                 </Routes>
               </main>
               <Footer />

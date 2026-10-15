@@ -27,13 +27,12 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({ onSelect
           params: { since: lastCheckRef.current }
         });
         if (res.data && res.data.length > 0) {
-          // Identify newly arrived ones
           setNotifications((prev) => {
             const existingIds = new Set(prev.map((n) => n.id));
             const newOnes = res.data.filter((n) => !existingIds.has(n.id));
             if (newOnes.length > 0) {
               setUnreadCount((c) => c + newOnes.length);
-              setToastMessage(newOnes[0]); // Trigger toast for newest
+              setToastMessage(newOnes[0]);
               setTimeout(() => setToastMessage(null), 6000);
             }
             return [...newOnes, ...prev].slice(0, 20);
@@ -45,10 +44,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({ onSelect
       }
     };
 
-    // Run initial poll immediately
     pollNotifications();
-
-    // Poll every 30 seconds
     const interval = setInterval(pollNotifications, 30000);
     return () => clearInterval(interval);
   }, [isAuthenticated]);
@@ -81,25 +77,63 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({ onSelect
   if (!isAuthenticated) return null;
 
   return (
-    <div className="relative" ref={dropdownRef}>
-      {/* Toast Alert for incoming contract */}
+    <div style={{ position: 'relative' }} ref={dropdownRef}>
+      {/* Toast Alert for newly arrived contract */}
       {toastMessage && (
-        <div className="fixed bottom-6 right-6 z-50 flex items-start gap-3 p-4 rounded-xl border border-primary bg-surface shadow-2xl animate-bounce-in max-w-sm">
-          <div className="p-2 rounded-lg bg-accent/20 text-accent flex-shrink-0">
-            <Bell className="w-5 h-5 animate-pulse" />
+        <div
+          style={{
+            position: 'fixed',
+            bottom: '1.5rem',
+            right: '1.5rem',
+            zIndex: 9999,
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: '0.75rem',
+            padding: '1rem',
+            borderRadius: 'var(--radius-md)',
+            border: '1px solid var(--accent-primary)',
+            backgroundColor: 'var(--bg-card)',
+            color: 'var(--text-primary)',
+            boxShadow: 'var(--shadow-lg)',
+            maxWidth: 'min(380px, calc(100vw - 3rem))',
+            width: '100%',
+            animation: 'slideInRight 0.25s ease-out',
+          }}
+        >
+          <div
+            style={{
+              padding: '0.5rem',
+              borderRadius: 'var(--radius-sm)',
+              backgroundColor: 'var(--accent-soft)',
+              color: 'var(--accent-primary)',
+              flexShrink: 0,
+            }}
+          >
+            <Bell size={18} style={{ animation: 'spin 2s ease infinite' }} />
           </div>
-          <div className="flex-1">
-            <h4 className="text-xs font-bold text-accent uppercase tracking-wider">New Agreement Arrived</h4>
-            <p className="text-sm font-semibold text-primary line-clamp-1 mt-0.5">{toastMessage.title}</p>
-            <p className="text-xs text-secondary mt-0.5">
-              {toastMessage.record_type} • {toastMessage.counterparty_name}
-            </p>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: '0.675rem', fontWeight: 800, color: 'var(--accent-primary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              New Agreement Arrived
+            </div>
+            <div style={{ fontSize: '0.875rem', fontWeight: 700, color: 'var(--text-primary)', marginTop: '0.2rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {toastMessage.title}
+            </div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.2rem' }}>
+              {toastMessage.record_type} &bull; {toastMessage.counterparty_name}
+            </div>
           </div>
           <button
             onClick={() => setToastMessage(null)}
-            className="text-secondary hover:text-primary transition-colors p-1"
+            style={{
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              color: 'var(--text-muted)',
+              padding: '0.2rem',
+            }}
+            aria-label="Close notification"
           >
-            <X className="w-4 h-4" />
+            <X size={15} />
           </button>
         </div>
       )}
@@ -107,56 +141,168 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({ onSelect
       {/* Bell Button */}
       <button
         onClick={handleToggle}
-        className="relative p-2 rounded-lg border border-border bg-surface text-secondary hover:text-primary hover:border-accent transition-all duration-200"
+        style={{
+          position: 'relative',
+          padding: '0.5rem',
+          borderRadius: 'var(--radius-sm)',
+          border: '1px solid var(--border-color)',
+          backgroundColor: 'var(--bg-card)',
+          color: 'var(--text-primary)',
+          cursor: 'pointer',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          transition: 'all 0.15s ease',
+        }}
         title="Live Contract Notifications"
         aria-label="Notifications"
       >
-        <Bell className="w-5 h-5" />
+        <Bell size={18} />
         {unreadCount > 0 && (
-          <span className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-accent text-[11px] font-bold text-black ring-2 ring-surface">
+          <span
+            style={{
+              position: 'absolute',
+              top: '-4px',
+              right: '-4px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              height: '18px',
+              minWidth: '18px',
+              padding: '0 4px',
+              borderRadius: '9999px',
+              backgroundColor: '#ef4444',
+              color: '#ffffff',
+              fontSize: '10px',
+              fontWeight: 800,
+              boxShadow: '0 0 8px rgba(239, 68, 68, 0.7)',
+            }}
+          >
             {unreadCount > 9 ? '9+' : unreadCount}
           </span>
         )}
       </button>
 
-      {/* Dropdown Menu */}
+      {/* Responsive Dropdown Menu */}
       {isOpen && (
-        <div className="absolute right-0 mt-2 w-80 md:w-96 rounded-xl border border-border bg-surface shadow-2xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2">
-          <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-surface-hover">
-            <div className="flex items-center gap-2">
-              <Bell className="w-4 h-4 text-accent" />
-              <h3 className="text-sm font-semibold text-primary">Live Ironclad Notifications</h3>
+        <div
+          style={{
+            position: 'absolute',
+            right: 0,
+            marginTop: '0.5rem',
+            width: 'min(380px, calc(100vw - 2rem))',
+            borderRadius: 'var(--radius-md)',
+            border: '1px solid var(--border-color)',
+            backgroundColor: 'var(--bg-card)',
+            boxShadow: 'var(--shadow-lg)',
+            zIndex: 1000,
+            overflow: 'hidden',
+            animation: 'modalIn 0.15s ease-out',
+          }}
+        >
+          {/* Dropdown Header */}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '0.85rem 1rem',
+              borderBottom: '1px solid var(--border-color)',
+              backgroundColor: 'var(--bg-secondary)',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <Bell size={16} style={{ color: 'var(--accent-primary)' }} />
+              <span style={{ fontSize: '0.875rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+                Live Ironclad Notifications
+              </span>
             </div>
-            <span className="text-xs px-2 py-0.5 rounded-full bg-accent/20 text-accent font-medium">
-              Live Polling
+            <span
+              style={{
+                fontSize: '0.675rem',
+                fontWeight: 700,
+                padding: '0.15rem 0.5rem',
+                borderRadius: '9999px',
+                backgroundColor: 'var(--accent-soft)',
+                color: 'var(--accent-primary)',
+                border: '1px solid var(--border-color)',
+              }}
+            >
+              Live
             </span>
           </div>
 
-          <div className="max-h-80 overflow-y-auto divide-y divide-border">
+          {/* Notifications List */}
+          <div style={{ maxHeight: '360px', overflowY: 'auto' }}>
             {notifications.length === 0 ? (
-              <div className="py-8 text-center text-secondary">
-                <CheckCircle className="w-8 h-8 mx-auto text-success/60 mb-2" />
-                <p className="text-sm">No new contracts at this moment.</p>
-                <p className="text-xs text-muted mt-1">Incoming Ironclad agreements will alert you here.</p>
+              <div style={{ padding: '2.5rem 1rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                <CheckCircle size={32} style={{ color: 'var(--success)', margin: '0 auto 0.75rem', opacity: 0.8 }} />
+                <p style={{ margin: 0, fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+                  All Caught Up
+                </p>
+                <p style={{ margin: '0.35rem 0 0', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                  New incoming Ironclad records will notify you in real-time.
+                </p>
               </div>
             ) : (
               notifications.map((n) => (
                 <div
                   key={n.id}
                   onClick={() => handleSelect(n.id)}
-                  className="p-3.5 hover:bg-surface-hover cursor-pointer transition-colors flex items-start gap-3"
+                  style={{
+                    padding: '0.85rem 1rem',
+                    borderBottom: '1px solid var(--border-color)',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'flex-start',
+                    gap: '0.75rem',
+                    transition: 'background-color 0.15s ease',
+                  }}
+                  className="hover-row"
                 >
-                  <div className="p-2 rounded-lg bg-surface border border-border text-accent flex-shrink-0 mt-0.5">
-                    <FileText className="w-4 h-4" />
+                  <div
+                    style={{
+                      padding: '0.45rem',
+                      borderRadius: 'var(--radius-sm)',
+                      backgroundColor: 'var(--bg-input)',
+                      border: '1px solid var(--border-color)',
+                      color: 'var(--accent-primary)',
+                      flexShrink: 0,
+                      marginTop: '2px',
+                    }}
+                  >
+                    <FileText size={15} />
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs font-mono text-accent truncate">{n.id}</p>
-                    <p className="text-sm font-medium text-primary line-clamp-1">{n.title}</p>
-                    <div className="flex items-center gap-2 mt-1">
-                      <span className="text-xs px-2 py-0.5 rounded bg-surface border border-border text-secondary">
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: '0.7rem', fontFamily: 'monospace', color: 'var(--accent-primary)', fontWeight: 700 }}>
+                      {n.id}
+                    </div>
+                    <div
+                      style={{
+                        fontSize: '0.85rem',
+                        fontWeight: 600,
+                        color: 'var(--text-primary)',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                        marginTop: '0.1rem',
+                      }}
+                    >
+                      {n.title}
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginTop: '0.3rem', fontSize: '0.725rem', color: 'var(--text-muted)' }}>
+                      <span
+                        style={{
+                          padding: '0.1rem 0.4rem',
+                          borderRadius: '4px',
+                          backgroundColor: 'var(--bg-input)',
+                          border: '1px solid var(--border-color)',
+                          color: 'var(--text-secondary)',
+                        }}
+                      >
                         {n.record_type}
                       </span>
-                      <span className="text-xs text-secondary truncate">{n.counterparty_name}</span>
+                      <span className="truncate">{n.counterparty_name}</span>
                     </div>
                   </div>
                 </div>

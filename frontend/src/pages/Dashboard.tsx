@@ -1,21 +1,19 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Contract, BiMetrics } from '../types';
-import { useAuth } from '../context/AuthContext';
 import { apiClient } from '../api/client';
 import { ContractCard } from '../components/ContractCard';
-import { ContractDetailModal } from '../components/ContractDetailModal';
 import { BiTool } from '../components/BiTool';
 import {
   LayoutGrid,
   Table as TableIcon,
   BarChart3,
   Search,
-  Building2,
   FileText,
   Eye,
   AlertCircle,
   Filter,
+  X,
 } from 'lucide-react';
 
 type TabType = 'grid' | 'table' | 'bi';
@@ -28,11 +26,10 @@ const ALLOWED_TYPES = [
 ];
 
 export const Dashboard: React.FC = () => {
-  const { user, hasPermission } = useAuth();
+  const navigate = useNavigate();
 
   const [activeTab, setActiveTab] = useState<TabType>('grid');
   const [contracts, setContracts] = useState<Contract[]>([]);
-  const [recordIds, setRecordIds] = useState<string[]>([]);
   const [biMetrics, setBiMetrics] = useState<BiMetrics | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
@@ -40,28 +37,23 @@ export const Dashboard: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedType, setSelectedType] = useState('All Types');
 
-  // Modal State
-  const [selectedContract, setSelectedContract] = useState<Contract | null>(null);
-  const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
-
-  const fetchData = async () => {
+  const fetchData = async (overrideSearch?: string) => {
     try {
       setIsLoading(true);
-      const params: any = {};
+      const params: Record<string, string> = {};
       if (selectedType !== 'All Types') params.record_type = selectedType;
-      if (searchQuery) params.search = searchQuery;
+      const query = overrideSearch !== undefined ? overrideSearch : searchQuery;
+      if (query.trim()) params.search = query.trim();
 
-      const [contractsRes, idsRes, biRes] = await Promise.all([
+      const [contractsRes, biRes] = await Promise.all([
         apiClient.get<Contract[]>('/contracts', { params }),
-        apiClient.get<string[]>('/contracts/ids'),
         apiClient.get<BiMetrics>('/contracts/bi-metrics'),
       ]);
 
       setContracts(contractsRes.data);
-      setRecordIds(idsRes.data);
       setBiMetrics(biRes.data);
     } catch (err) {
-      console.error('Error fetching live Ironclad contracts:', err);
+      console.error('Error fetching contracts:', err);
     } finally {
       setIsLoading(false);
     }
@@ -76,18 +68,13 @@ export const Dashboard: React.FC = () => {
     fetchData();
   };
 
-  const navigate = useNavigate();
+  const handleClearSearch = () => {
+    setSearchQuery('');
+    fetchData('');
+  };
 
   const handleOpenDetail = (contract: Contract) => {
     navigate(`/contracts/${contract.id}`);
-  };
-
-  const formatCurrency = (val: number, cur: string = 'USD') => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: cur,
-      maximumFractionDigits: 0,
-    }).format(val);
   };
 
   const formatDate = (dateStr?: string) => {
@@ -104,246 +91,122 @@ export const Dashboard: React.FC = () => {
   };
 
   return (
-    <div className="container" style={{ padding: '2rem 1rem' }}>
-      {/* Top Banner: Ironclad Live Repository Indicator */}
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          marginBottom: '1.75rem',
-          flexWrap: 'wrap',
-          gap: '1rem',
-        }}
-      >
+    <div className="dashboard-container">
+      {/* Top Header: Title, Count, & View Switcher */}
+      <div className="dashboard-header">
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
-            <h1 style={{ fontSize: '1.75rem', fontWeight: 800, color: 'var(--text-primary)' }}>
-              Contract Repository
-            </h1>
-            <span
-              style={{
-                fontSize: '0.75rem',
-                padding: '0.2rem 0.6rem',
-                borderRadius: '9999px',
-                backgroundColor: 'rgba(16, 185, 129, 0.15)',
-                color: '#10b981',
-                fontWeight: 700,
-                border: '1px solid rgba(16, 185, 129, 0.3)',
-              }}
-            >
-              ● LIVE IRONCLAD API
+          <div className="dashboard-title-row">
+            <h1 className="dashboard-title">Contracts</h1>
+            <span className="count-badge">
+              {contracts.length} {contracts.length === 1 ? 'Record' : 'Records'}
             </span>
           </div>
-          <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', marginTop: '0.25rem' }}>
-            Live Ironclad Repository • Whitelisted Types: Property Service Contract, Purchase &amp; Sales Agreement, General Services Agreement.
+          <p className="dashboard-subtitle">
+            Search, filter, and inspect enterprise agreements and attachments.
           </p>
         </div>
-      </div>
 
-      {/* Record IDs Bar */}
-      <div
-        style={{
-          backgroundColor: 'var(--bg-secondary)',
-          borderRadius: 'var(--radius-md)',
-          border: '1px solid var(--border-color)',
-          padding: '0.85rem 1.25rem',
-          marginBottom: '1.5rem',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: '1rem',
-          flexWrap: 'wrap',
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-          <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
-            Live Record IDs ({recordIds.length}):
-          </span>
-          <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
-            {recordIds.slice(0, 6).map((id) => (
-              <span
-                key={id}
-                style={{
-                  fontFamily: 'monospace',
-                  fontSize: '0.75rem',
-                  padding: '0.15rem 0.45rem',
-                  borderRadius: '4px',
-                  backgroundColor: 'var(--bg-input)',
-                  border: '1px solid var(--border-color)',
-                  color: 'var(--accent-primary)',
-                }}
-              >
-                {id}
-              </span>
-            ))}
-            {recordIds.length > 6 && (
-              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', alignSelf: 'center' }}>
-                +{recordIds.length - 6} more
-              </span>
-            )}
-          </div>
-        </div>
+        {/* View Switcher Controls */}
+        <div className="view-switcher" role="tablist">
+          <button
+            type="button"
+            onClick={() => setActiveTab('grid')}
+            className={`view-tab-btn ${activeTab === 'grid' ? 'active' : ''}`}
+            aria-selected={activeTab === 'grid'}
+          >
+            <LayoutGrid size={15} />
+            <span>Grid</span>
+          </button>
 
-        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-          Database Persistence: <strong style={{ color: 'var(--accent-primary)' }}>Disabled (Zero Storage)</strong>
+          <button
+            type="button"
+            onClick={() => setActiveTab('table')}
+            className={`view-tab-btn ${activeTab === 'table' ? 'active' : ''}`}
+            aria-selected={activeTab === 'table'}
+          >
+            <TableIcon size={15} />
+            <span>Table</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('bi')}
+            className={`view-tab-btn ${activeTab === 'bi' ? 'active' : ''}`}
+            aria-selected={activeTab === 'bi'}
+          >
+            <BarChart3 size={15} />
+            <span>Analytics</span>
+          </button>
         </div>
       </div>
 
-      {/* Search, Whitelisted Type Filter & Tabs */}
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          marginBottom: '1.5rem',
-          flexWrap: 'wrap',
-          gap: '1rem',
-        }}
-      >
+      {/* Direct Search & Category Filter Toolbar */}
+      <div className="dashboard-toolbar">
         {/* Search Input Form */}
-        <form onSubmit={handleSearchSubmit} style={{ display: 'flex', gap: '0.5rem', flex: '1', maxWidth: '420px' }}>
-          <div style={{ position: 'relative', width: '100%' }}>
-            <Search
-              size={16}
-              style={{
-                position: 'absolute',
-                left: '0.85rem',
-                top: '50%',
-                transform: 'translateY(-50%)',
-                color: 'var(--text-muted)',
-              }}
-            />
+        <form onSubmit={handleSearchSubmit} className="search-form">
+          <div className="search-input-wrapper">
+            <Search size={16} className="search-icon" />
             <input
               type="text"
-              placeholder="Search by ID, title, counterparty..."
+              placeholder="Search by ID, title, or counterparty..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="input"
-              style={{ paddingLeft: '2.4rem', width: '100%' }}
+              className="input search-input"
             />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={handleClearSearch}
+                className="search-clear-btn"
+                title="Clear search"
+              >
+                <X size={14} />
+              </button>
+            )}
           </div>
-          <button type="submit" className="btn btn-primary" style={{ padding: '0.5rem 1rem' }}>
+          <button type="submit" className="btn btn-primary search-submit-btn">
             Search
           </button>
         </form>
 
-        {/* Record Type Category Pills */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
-          <Filter size={15} style={{ color: 'var(--text-muted)', marginRight: '0.2rem' }} />
+        {/* Contract Type Filter Pills */}
+        <div className="filter-group">
+          <span className="filter-label">
+            <Filter size={13} />
+            <span>Type:</span>
+          </span>
           {ALLOWED_TYPES.map((type) => (
             <button
               key={type}
+              type="button"
               onClick={() => setSelectedType(type)}
-              style={{
-                fontSize: '0.775rem',
-                padding: '0.35rem 0.75rem',
-                borderRadius: 'var(--radius-sm)',
-                fontWeight: 600,
-                border: '1px solid',
-                borderColor: selectedType === type ? 'var(--accent-primary)' : 'var(--border-color)',
-                backgroundColor: selectedType === type ? 'var(--accent-soft)' : 'var(--bg-secondary)',
-                color: selectedType === type ? 'var(--accent-primary)' : 'var(--text-secondary)',
-                cursor: 'pointer',
-                transition: 'all 0.15s ease',
-              }}
+              className={`filter-pill ${selectedType === type ? 'active' : ''}`}
             >
               {type}
             </button>
           ))}
         </div>
-
-        {/* View Tabs Switcher */}
-        <div style={{ display: 'flex', backgroundColor: 'var(--bg-input)', borderRadius: 'var(--radius-sm)', padding: '0.25rem' }}>
-          <button
-            onClick={() => setActiveTab('grid')}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.35rem',
-              padding: '0.4rem 0.75rem',
-              borderRadius: 'var(--radius-sm)',
-              fontSize: '0.8rem',
-              fontWeight: 600,
-              border: 'none',
-              backgroundColor: activeTab === 'grid' ? 'var(--bg-surface)' : 'transparent',
-              color: activeTab === 'grid' ? 'var(--accent-primary)' : 'var(--text-secondary)',
-              boxShadow: activeTab === 'grid' ? 'var(--shadow-sm)' : 'none',
-              cursor: 'pointer',
-            }}
-          >
-            <LayoutGrid size={15} />
-            Grid
-          </button>
-
-          <button
-            onClick={() => setActiveTab('table')}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.35rem',
-              padding: '0.4rem 0.75rem',
-              borderRadius: 'var(--radius-sm)',
-              fontSize: '0.8rem',
-              fontWeight: 600,
-              border: 'none',
-              backgroundColor: activeTab === 'table' ? 'var(--bg-surface)' : 'transparent',
-              color: activeTab === 'table' ? 'var(--accent-primary)' : 'var(--text-secondary)',
-              boxShadow: activeTab === 'table' ? 'var(--shadow-sm)' : 'none',
-              cursor: 'pointer',
-            }}
-          >
-            <TableIcon size={15} />
-            Table
-          </button>
-
-          <button
-            onClick={() => setActiveTab('bi')}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.35rem',
-              padding: '0.4rem 0.75rem',
-              borderRadius: 'var(--radius-sm)',
-              fontSize: '0.8rem',
-              fontWeight: 600,
-              border: 'none',
-              backgroundColor: activeTab === 'bi' ? 'var(--bg-surface)' : 'transparent',
-              color: activeTab === 'bi' ? 'var(--accent-primary)' : 'var(--text-secondary)',
-              boxShadow: activeTab === 'bi' ? 'var(--shadow-sm)' : 'none',
-              cursor: 'pointer',
-            }}
-          >
-            <BarChart3 size={15} />
-            Lite BI Tool
-          </button>
-        </div>
       </div>
 
-      {/* Main Content Areas */}
+      {/* Main Content: Loading, Grid, Table, or Analytics */}
       {isLoading ? (
-        <div style={{ textAlign: 'center', padding: '5rem 0', color: 'var(--text-secondary)' }}>
-          <div className="spinner" style={{ margin: '0 auto 1rem' }} />
-          <p style={{ fontWeight: 600 }}>Querying Ironclad API &amp; Validating Whitelisted Record Types...</p>
+        <div className="empty-state">
+          <div className="spinner" style={{ margin: '0 auto 1.25rem' }} />
+          <h3 className="empty-state-title">Loading Contracts</h3>
+          <p className="empty-state-desc">Retrieving records and applying security filters...</p>
         </div>
       ) : activeTab === 'grid' ? (
         /* GRID VIEW */
         contracts.length === 0 ? (
-          <div className="card" style={{ textAlign: 'center', padding: '4rem 1rem' }}>
-            <AlertCircle size={40} style={{ color: 'var(--text-muted)', margin: '0 auto 1rem' }} />
-            <h3 style={{ fontSize: '1.2rem', fontWeight: 700, marginBottom: '0.5rem' }}>No Matching Contracts Found</h3>
-            <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>
-              No live records in Ironclad match your current filter or query.
+          <div className="empty-state">
+            <AlertCircle size={40} className="empty-state-icon" />
+            <h3 className="empty-state-title">No Matching Contracts Found</h3>
+            <p className="empty-state-desc">
+              No contract records match your current filter or search criteria.
             </p>
           </div>
         ) : (
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))',
-              gap: '1.5rem',
-            }}
-          >
+          <div className="contract-grid">
             {contracts.map((c) => (
               <ContractCard
                 key={c.id}
@@ -355,97 +218,94 @@ export const Dashboard: React.FC = () => {
         )
       ) : activeTab === 'table' ? (
         /* TABLE VIEW */
-        <div className="card" style={{ overflowX: 'auto', padding: '0' }}>
-          <table className="table" style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr style={{ borderBottom: '1px solid var(--border-color)', textAlign: 'left', backgroundColor: 'var(--bg-input)' }}>
-                <th style={{ padding: '0.85rem 1rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>RECORD ID</th>
-                <th style={{ padding: '0.85rem 1rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>TITLE</th>
-                <th style={{ padding: '0.85rem 1rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>RECORD TYPE</th>
-                <th style={{ padding: '0.85rem 1rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>COUNTERPARTY</th>
-                <th style={{ padding: '0.85rem 1rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>COMMUNITY</th>
-                <th style={{ padding: '0.85rem 1rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>EFFECTIVE</th>
-                <th style={{ padding: '0.85rem 1rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>EXPIRATION</th>
-                <th style={{ padding: '0.85rem 1rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>STATUS</th>
-                <th style={{ padding: '0.85rem 1rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>DOCS</th>
-                <th style={{ padding: '0.85rem 1rem', fontSize: '0.75rem', color: 'var(--text-muted)', textAlign: 'right' }}>ACTION</th>
-              </tr>
-            </thead>
-            <tbody>
-              {contracts.map((c) => (
-                <tr
-                  key={c.id}
-                  onClick={() => handleOpenDetail(c)}
-                  style={{
-                    borderBottom: '1px solid var(--border-color)',
-                    cursor: 'pointer',
-                    transition: 'background-color 0.15s ease',
-                  }}
-                  className="hover-row"
-                >
-                  <td style={{ padding: '0.85rem 1rem', fontFamily: 'monospace', fontSize: '0.75rem', color: 'var(--accent-primary)', fontWeight: 600 }}>
-                    {c.ironclad_id || c.id}
-                  </td>
-                  <td style={{ padding: '0.85rem 1rem', fontWeight: 600, color: 'var(--text-primary)', maxWidth: '240px' }}>
-                    <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.name || c.title}</div>
-                  </td>
-                  <td style={{ padding: '0.85rem 1rem', fontSize: '0.75rem' }}>
-                    <span style={{ padding: '0.2rem 0.5rem', borderRadius: '4px', backgroundColor: 'var(--bg-input)', border: '1px solid var(--border-color)', fontWeight: 600 }}>
-                      {c.type_display_name || c.record_type}
-                    </span>
-                  </td>
-                  <td style={{ padding: '0.85rem 1rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                    {c.counterparty_name}
-                  </td>
-                  <td style={{ padding: '0.85rem 1rem', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                    {c.community_name || 'N/A'}
-                  </td>
-                  <td style={{ padding: '0.85rem 1rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                    {formatDate(c.effective_date || c.agreement_date)}
-                  </td>
-                  <td style={{ padding: '0.85rem 1rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                    {formatDate(c.expiration_date || c.completion_date)}
-                  </td>
-                  <td style={{ padding: '0.85rem 1rem' }}>
-                    <span className="badge" style={{ fontSize: '0.7rem' }}>
-                      {c.enhanced_status || c.status}
-                    </span>
-                  </td>
-                  <td style={{ padding: '0.85rem 1rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                      <FileText size={13} style={{ color: 'var(--accent-primary)' }} />
-                      <span>{c.attachment_count ?? (c.attachments?.length || 0)}</span>
-                    </div>
-                  </td>
-                  <td style={{ padding: '0.85rem 1rem', textAlign: 'right' }}>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleOpenDetail(c);
-                      }}
-                      className="btn btn-secondary"
-                      style={{ padding: '0.3rem 0.65rem', fontSize: '0.75rem', display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}
-                    >
-                      <Eye size={13} />
-                      View
-                    </button>
-                  </td>
+        contracts.length === 0 ? (
+          <div className="empty-state">
+            <AlertCircle size={40} className="empty-state-icon" />
+            <h3 className="empty-state-title">No Contracts Available</h3>
+            <p className="empty-state-desc">Try clearing your search query or selecting a different filter.</p>
+          </div>
+        ) : (
+          <div className="table-card">
+            <table className="responsive-table">
+              <thead>
+                <tr className="table-header-row">
+                  <th className="table-header-cell">RECORD ID</th>
+                  <th className="table-header-cell">TITLE</th>
+                  <th className="table-header-cell">RECORD TYPE</th>
+                  <th className="table-header-cell">COUNTERPARTY</th>
+                  <th className="table-header-cell">COMMUNITY</th>
+                  <th className="table-header-cell">EFFECTIVE</th>
+                  <th className="table-header-cell">EXPIRATION</th>
+                  <th className="table-header-cell">STATUS</th>
+                  <th className="table-header-cell">DOCS</th>
+                  <th className="table-header-cell" style={{ textAlign: 'right' }}>ACTION</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {contracts.map((c) => (
+                  <tr
+                    key={c.id}
+                    onClick={() => handleOpenDetail(c)}
+                    className="table-row"
+                  >
+                    <td className="table-cell" style={{ fontFamily: 'monospace', fontWeight: 600, color: 'var(--accent-primary)' }}>
+                      {c.ironclad_id || c.id}
+                    </td>
+                    <td className="table-cell" style={{ fontWeight: 600, color: 'var(--text-primary)', maxWidth: '240px' }}>
+                      <div className="truncate">{c.name || c.title}</div>
+                    </td>
+                    <td className="table-cell">
+                      <span className="badge" style={{ textTransform: 'none' }}>
+                        {c.type_display_name || c.record_type}
+                      </span>
+                    </td>
+                    <td className="table-cell">
+                      {c.counterparty_name || 'N/A'}
+                    </td>
+                    <td className="table-cell" style={{ color: 'var(--text-muted)' }}>
+                      {c.community_name || 'N/A'}
+                    </td>
+                    <td className="table-cell">
+                      {formatDate(c.effective_date || c.agreement_date)}
+                    </td>
+                    <td className="table-cell">
+                      {formatDate(c.expiration_date || c.completion_date)}
+                    </td>
+                    <td className="table-cell">
+                      <span className="badge">
+                        {c.enhanced_status || c.status}
+                      </span>
+                    </td>
+                    <td className="table-cell">
+                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
+                        <FileText size={13} style={{ color: 'var(--accent-primary)' }} />
+                        <span>{c.attachment_count ?? (c.attachments?.length || 0)}</span>
+                      </div>
+                    </td>
+                    <td className="table-cell" style={{ textAlign: 'right' }}>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleOpenDetail(c);
+                        }}
+                        className="btn btn-secondary"
+                        style={{ padding: '0.3rem 0.65rem', fontSize: '0.75rem' }}
+                      >
+                        <Eye size={13} />
+                        <span>View</span>
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
       ) : (
         /* LITE BI TOOL VIEW */
         <BiTool metrics={biMetrics} />
       )}
-
-      {/* Contract Detailed View Modal (With Document View & Download RBAC) */}
-      <ContractDetailModal
-        contract={selectedContract}
-        isOpen={isDetailModalOpen}
-        onClose={() => setIsDetailModalOpen(false)}
-      />
     </div>
   );
 };

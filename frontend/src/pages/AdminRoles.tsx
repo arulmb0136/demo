@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { User, RoleDefinition, PermissionOption } from '../types';
+import { useAuth } from '../context/AuthContext';
 import { apiClient } from '../api/client';
 import {
   Shield,
@@ -19,6 +20,13 @@ import {
 } from 'lucide-react';
 
 export const AdminRoles: React.FC = () => {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
+  const isManager = user?.role === 'manager';
+  const isEditor = user?.role === 'editor';
+  const canAddUser = isAdmin || isManager;
+  const canEditUser = isAdmin;
+
   const [activeTab, setActiveTab] = useState<'users' | 'roles' | 'categories'>('users');
   const [users, setUsers] = useState<User[]>([]);
   const [roles, setRoles] = useState<RoleDefinition[]>([]);
@@ -245,13 +253,13 @@ export const AdminRoles: React.FC = () => {
         </div>
 
         {/* Action Button */}
-        {activeTab === 'users' && (
+        {activeTab === 'users' && canAddUser && (
           <button onClick={handleOpenAddUser} className="btn btn-primary" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}>
             <UserPlus size={16} />
             + Add New User
           </button>
         )}
-        {activeTab === 'roles' && (
+        {activeTab === 'roles' && isAdmin && (
           <button onClick={handleOpenAddRole} className="btn btn-primary" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}>
             <PlusCircle size={16} />
             + Add New Role
@@ -259,50 +267,25 @@ export const AdminRoles: React.FC = () => {
         )}
       </div>
 
-      {/* Navigation Tabs */}
-      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem' }}>
+
+
+            {/* Navigation Tabs */}
+      <div className="admin-tabs-nav">
         <button
           onClick={() => setActiveTab('users')}
-          style={{
-            padding: '0.5rem 1rem',
-            borderRadius: 'var(--radius-sm)',
-            fontWeight: 600,
-            fontSize: '0.875rem',
-            border: 'none',
-            backgroundColor: activeTab === 'users' ? 'var(--accent-soft)' : 'transparent',
-            color: activeTab === 'users' ? 'var(--accent-primary)' : 'var(--text-secondary)',
-            cursor: 'pointer',
-          }}
+          className={`admin-tab-btn ${activeTab === 'users' ? 'active' : ''}`}
         >
           Users List ({users.length})
         </button>
         <button
           onClick={() => setActiveTab('roles')}
-          style={{
-            padding: '0.5rem 1rem',
-            borderRadius: 'var(--radius-sm)',
-            fontWeight: 600,
-            fontSize: '0.875rem',
-            border: 'none',
-            backgroundColor: activeTab === 'roles' ? 'var(--accent-soft)' : 'transparent',
-            color: activeTab === 'roles' ? 'var(--accent-primary)' : 'var(--text-secondary)',
-            cursor: 'pointer',
-          }}
+          className={`admin-tab-btn ${activeTab === 'roles' ? 'active' : ''}`}
         >
           Roles &amp; Policies ({roles.length})
         </button>
         <button
           onClick={() => setActiveTab('categories')}
-          style={{
-            padding: '0.5rem 1rem',
-            borderRadius: 'var(--radius-sm)',
-            fontWeight: 600,
-            fontSize: '0.875rem',
-            border: 'none',
-            backgroundColor: activeTab === 'categories' ? 'var(--accent-soft)' : 'transparent',
-            color: activeTab === 'categories' ? 'var(--accent-primary)' : 'var(--text-secondary)',
-            cursor: 'pointer',
-          }}
+          className={`admin-tab-btn ${activeTab === 'categories' ? 'active' : ''}`}
         >
           Whitelisted Categories ({allowedCategories.length})
         </button>
@@ -366,14 +349,20 @@ export const AdminRoles: React.FC = () => {
                     </span>
                   </td>
                   <td style={{ padding: '1rem 1.25rem', textAlign: 'right' }}>
-                    <button
-                      onClick={() => handleOpenEditUser(u)}
-                      className="btn btn-secondary"
-                      style={{ padding: '0.35rem 0.75rem', fontSize: '0.8rem', display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}
-                    >
-                      <UserCog size={14} />
-                      Edit User
-                    </button>
+                    {canEditUser ? (
+                      <button
+                        onClick={() => handleOpenEditUser(u)}
+                        className="btn btn-secondary"
+                        style={{ padding: '0.35rem 0.75rem', fontSize: '0.8rem', display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}
+                      >
+                        <UserCog size={14} />
+                        Edit User
+                      </button>
+                    ) : (
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                        Read Only
+                      </span>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -401,14 +390,16 @@ export const AdminRoles: React.FC = () => {
                   <span style={{ fontFamily: 'monospace', fontSize: '0.75rem', fontWeight: 700, color: 'var(--accent-primary)' }}>
                     ROLE: {r.role_key.toUpperCase()}
                   </span>
-                  <button
-                    onClick={() => handleOpenEditRole(r)}
-                    className="btn btn-outline"
-                    style={{ padding: '0.3rem 0.5rem', fontSize: '0.75rem' }}
-                  >
-                    <Edit2 size={13} />
-                    Edit
-                  </button>
+                  {isAdmin && (
+                    <button
+                      onClick={() => handleOpenEditRole(r)}
+                      className="btn btn-outline"
+                      style={{ padding: '0.3rem 0.5rem', fontSize: '0.75rem' }}
+                    >
+                      <Edit2 size={13} />
+                      Edit
+                    </button>
+                  )}
                 </div>
                 <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '0.35rem' }}>
                   {r.display_name}

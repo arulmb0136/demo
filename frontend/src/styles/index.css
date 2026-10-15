@@ -408,3 +408,19 @@ button, input, select, textarea {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--text-muted);
 }
+
+@keyframes indeterminateProgress {
+  0% { transform: translateX(-100%); width: 50%; }
+  50% { transform: translateX(25%); width: 75%; }
+  100% { transform: translateX(100%); width: 50%; }
+}
+
+@keyframes slideInRight {
+  from { opacity: 0; transform: translateX(20px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}

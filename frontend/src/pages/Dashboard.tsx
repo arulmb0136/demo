@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Contract, BiMetrics } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { apiClient } from '../api/client';
@@ -75,9 +76,10 @@ export const Dashboard: React.FC = () => {
     fetchData();
   };
 
+  const navigate = useNavigate();
+
   const handleOpenDetail = (contract: Contract) => {
-    setSelectedContract(contract);
-    setIsDetailModalOpen(true);
+    navigate(`/contracts/${contract.id}`);
   };
 
   const formatCurrency = (val: number, cur: string = 'USD') => {

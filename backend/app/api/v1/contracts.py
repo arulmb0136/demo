@@ -111,9 +111,15 @@ async def check_new_contracts_notifications(
 
 @router.get("/bi-metrics", response_model=BiMetricsResponse)
 async def get_bi_analytics(
+    record_type: Optional[str] = Query(None, description="Filter metrics by contract record type"),
+    search: Optional[str] = Query(None, description="Filter metrics by search query"),
     current_user: User = Depends(require_permission("contracts:view"))
 ):
-    contracts = await ironclad_service.fetch_allowed_contracts(user_email=current_user.email)
+    contracts = await ironclad_service.fetch_allowed_contracts(
+        record_type=record_type,
+        search_query=search,
+        user_email=current_user.email
+    )
     total_val = sum(c.get("contract_value", 0.0) for c in contracts)
     total_count = len(contracts)
     signed_count = sum(1 for c in contracts if c.get("status") in ["signed", "completed", "active"])

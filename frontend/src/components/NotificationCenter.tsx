@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Bell, CheckCircle, FileText, X } from 'lucide-react';
 import { apiClient } from '../api/client';
 import { ContractNotification } from '../types';
@@ -9,6 +10,7 @@ interface NotificationCenterProps {
 }
 
 export const NotificationCenter: React.FC<NotificationCenterProps> = ({ onSelectContract }) => {
+  const navigate = useNavigate();
   const { isAuthenticated, hasPermission } = useAuth();
   const [notifications, setNotifications] = useState<ContractNotification[]>([]);
   const [isOpen, setIsOpen] = useState(false);
@@ -24,7 +26,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({ onSelect
     const pollNotifications = async () => {
       try {
         const res = await apiClient.get<ContractNotification[]>('/contracts/notifications/check', {
-          params: { since: lastCheckRef.current }
+          params: { since: lastCheckRef.current },
         });
         if (res.data && res.data.length > 0) {
           setNotifications((prev) => {
@@ -69,6 +71,8 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({ onSelect
 
   const handleSelect = (id: string) => {
     setIsOpen(false);
+    setToastMessage(null);
+    navigate(`/contracts/${id}`);
     if (onSelectContract) {
       onSelectContract(id);
     }
@@ -81,6 +85,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({ onSelect
       {/* Toast Alert for newly arrived contract */}
       {toastMessage && (
         <div
+          onClick={() => handleSelect(toastMessage.id)}
           style={{
             position: 'fixed',
             bottom: '1.5rem',
@@ -97,8 +102,10 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({ onSelect
             boxShadow: 'var(--shadow-lg)',
             maxWidth: 'min(380px, calc(100vw - 3rem))',
             width: '100%',
+            cursor: 'pointer',
             animation: 'slideInRight 0.25s ease-out',
           }}
+          title="Click to view full contract details"
         >
           <div
             style={{
@@ -112,18 +119,44 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({ onSelect
             <Bell size={18} style={{ animation: 'spin 2s ease infinite' }} />
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: '0.675rem', fontWeight: 800, color: 'var(--accent-primary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            <div
+              style={{
+                fontSize: '0.675rem',
+                fontWeight: 800,
+                color: 'var(--accent-primary)',
+                textTransform: 'uppercase',
+                letterSpacing: '0.05em',
+              }}
+            >
               New Agreement Arrived
             </div>
-            <div style={{ fontSize: '0.875rem', fontWeight: 700, color: 'var(--text-primary)', marginTop: '0.2rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {toastMessage.title}
+            {/* Document Title prominently shown */}
+            <div
+              style={{
+                fontSize: '0.875rem',
+                fontWeight: 700,
+                color: 'var(--text-primary)',
+                marginTop: '0.2rem',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {toastMessage.title || 'Contract Document'}
             </div>
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.2rem' }}>
-              {toastMessage.record_type} &bull; {toastMessage.counterparty_name}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginTop: '0.25rem', fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+              <span style={{ fontFamily: 'monospace', fontWeight: 600, color: 'var(--accent-primary)' }}>
+                ID: {toastMessage.id}
+              </span>
+              <span>&bull;</span>
+              <span>{toastMessage.record_type}</span>
             </div>
           </div>
           <button
-            onClick={() => setToastMessage(null)}
+            onClick={(e) => {
+              e.stopPropagation();
+              setToastMessage(null);
+            }}
             style={{
               background: 'none',
               border: 'none',
@@ -214,7 +247,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({ onSelect
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               <Bell size={16} style={{ color: 'var(--accent-primary)' }} />
               <span style={{ fontSize: '0.875rem', fontWeight: 700, color: 'var(--text-primary)' }}>
-                Live Ironclad Notifications
+                Notifications
               </span>
             </div>
             <span
@@ -228,7 +261,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({ onSelect
                 border: '1px solid var(--border-color)',
               }}
             >
-              Live
+              {notifications.length} {notifications.length === 1 ? 'Record' : 'Records'}
             </span>
           </div>
 
@@ -241,7 +274,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({ onSelect
                   All Caught Up
                 </p>
                 <p style={{ margin: '0.35rem 0 0', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                  New incoming Ironclad records will notify you in real-time.
+                  New incoming contract agreements will notify you in real-time.
                 </p>
               </div>
             ) : (
@@ -259,50 +292,72 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({ onSelect
                     transition: 'background-color 0.15s ease',
                   }}
                   className="hover-row"
+                  title="Click to view complete details with ID"
                 >
                   <div
                     style={{
                       padding: '0.45rem',
                       borderRadius: 'var(--radius-sm)',
-                      backgroundColor: 'var(--bg-input)',
+                      backgroundColor: 'var(--accent-soft)',
                       border: '1px solid var(--border-color)',
                       color: 'var(--accent-primary)',
                       flexShrink: 0,
                       marginTop: '2px',
                     }}
                   >
-                    <FileText size={15} />
+                    <FileText size={16} />
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: '0.7rem', fontFamily: 'monospace', color: 'var(--accent-primary)', fontWeight: 700 }}>
-                      {n.id}
-                    </div>
+                    {/* Document Name as primary title */}
                     <div
                       style={{
-                        fontSize: '0.85rem',
-                        fontWeight: 600,
+                        fontSize: '0.875rem',
+                        fontWeight: 700,
                         color: 'var(--text-primary)',
                         overflow: 'hidden',
                         textOverflow: 'ellipsis',
                         whiteSpace: 'nowrap',
-                        marginTop: '0.1rem',
+                      }}
+                      title={n.title}
+                    >
+                      {n.title || 'Contract Agreement'}
+                    </div>
+
+                    {/* Metadata: ID badge, type, counterparty */}
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.4rem',
+                        marginTop: '0.25rem',
+                        fontSize: '0.725rem',
+                        flexWrap: 'wrap',
                       }}
                     >
-                      {n.title}
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginTop: '0.3rem', fontSize: '0.725rem', color: 'var(--text-muted)' }}>
                       <span
                         style={{
+                          fontFamily: 'monospace',
+                          fontSize: '0.7rem',
+                          fontWeight: 700,
+                          color: 'var(--accent-primary)',
+                          backgroundColor: 'var(--bg-input)',
                           padding: '0.1rem 0.4rem',
                           borderRadius: '4px',
-                          backgroundColor: 'var(--bg-input)',
                           border: '1px solid var(--border-color)',
-                          color: 'var(--text-secondary)',
                         }}
                       >
-                        {n.record_type}
+                        ID: {n.id}
                       </span>
-                      <span className="truncate">{n.counterparty_name}</span>
+                      <span style={{ color: 'var(--text-muted)' }}>&bull;</span>
+                      <span style={{ color: 'var(--text-secondary)' }}>{n.record_type}</span>
+                      {n.counterparty_name && (
+                        <>
+                          <span style={{ color: 'var(--text-muted)' }}>&bull;</span>
+                          <span style={{ color: 'var(--text-muted)' }} className="truncate">
+                            {n.counterparty_name}
+                          </span>
+                        </>
+                      )}
                     </div>
                   </div>
                 </div>

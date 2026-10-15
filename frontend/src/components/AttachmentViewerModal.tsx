@@ -30,15 +30,29 @@ export const AttachmentViewerModal: React.FC<AttachmentViewerModalProps> = ({
 
   if (!isOpen || !attachment) return null;
 
-  const directUrl = attachment.view_url || attachment.url || attachment.download_url || '';
+  const token = localStorage.getItem('auth_token') || '';
+  const rawUrl = attachment.view_url || attachment.url || attachment.download_url || '';
+  const directUrl = rawUrl.startsWith('http') ? rawUrl : `${window.location.origin}${rawUrl}`;
+  // Secure Stream Gateway authenticated URL with token parameter for iframe / direct preview
+  const authenticatedUrl = token
+    ? (directUrl.includes('token=') ? directUrl : `${directUrl}${directUrl.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`)
+    : directUrl;
+
   const contentType = (attachment.content_type || 'application/pdf').toLowerCase();
   const isPdf = contentType.includes('pdf') || attachment.name?.toLowerCase().endsWith('.pdf');
   const isImage = contentType.startsWith('image/') || /\.(png|jpe?g|gif|webp|svg)$/i.test(attachment.name || '');
 
   const handleDownload = () => {
     if (!canDownload || !attachment.download_url) return;
+    const rawDl = attachment.download_url.startsWith('http')
+      ? attachment.download_url
+      : `${window.location.origin}${attachment.download_url}`;
+    const downloadUrl = token
+      ? (rawDl.includes('token=') ? rawDl : `${rawDl}${rawDl.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`)
+      : rawDl;
+
     const link = document.createElement('a');
-    link.href = attachment.download_url;
+    link.href = downloadUrl;
     link.target = '_blank';
     link.download = attachment.filename || attachment.name;
     document.body.appendChild(link);
@@ -156,7 +170,7 @@ export const AttachmentViewerModal: React.FC<AttachmentViewerModalProps> = ({
             {/* Open Direct in New Tab */}
             {directUrl && (
               <a
-                href={directUrl}
+                href={authenticatedUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="btn btn-secondary"
@@ -220,7 +234,7 @@ export const AttachmentViewerModal: React.FC<AttachmentViewerModalProps> = ({
           {isPdf ? (
             /* PDF In-App Viewer */
             <iframe
-              src={directUrl}
+              src={authenticatedUrl}
               title={attachment.name}
               style={{
                 width: '100%',
@@ -233,7 +247,7 @@ export const AttachmentViewerModal: React.FC<AttachmentViewerModalProps> = ({
             /* Image In-App Viewer */
             <div style={{ padding: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', height: '100%' }}>
               <img
-                src={directUrl}
+                src={authenticatedUrl}
                 alt={attachment.name}
                 style={{
                   maxWidth: '100%',
@@ -267,7 +281,7 @@ export const AttachmentViewerModal: React.FC<AttachmentViewerModalProps> = ({
               </p>
               <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', flexWrap: 'wrap' }}>
                 <a
-                  href={directUrl}
+                  href={authenticatedUrl}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="btn btn-primary"

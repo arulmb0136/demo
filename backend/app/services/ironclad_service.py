@@ -235,6 +235,67 @@ class IroncladService:
         return None
 
     # -------------------------------------------------------------------------
+    # -------------------------------------------------------------------------
+    # 2b. Attachment Streaming Gateway (Option 1: Secure Server-Side Proxy)
+    # -------------------------------------------------------------------------
+    async def get_attachment_stream(self, record_id: str, attachment_key: str, user_email: Optional[str] = None):
+        """
+        Fetches an attachment directly from the Ironclad API using authenticated OAuth token.
+        Streams binary data back to the client so that users can view and download documents
+        without raw 401 unauthorized errors.
+        Returns: (bytes_content, content_type, filename)
+        """
+        if not self.token_manager.has_credentials():
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Ironclad OAuth credentials are not configured on the server."
+            )
+
+        headers = await self._get_auth_headers(user_email=user_email)
+        url = f"{self.api_root}/records/{record_id}/attachments/{attachment_key}"
+
+        async def _download_call(verify_ssl: bool = True):
+            async with httpx.AsyncClient(timeout=45.0, verify=verify_ssl, follow_redirects=True) as client:
+                return await client.get(url, headers=headers)
+
+        try:
+            try:
+                res = await _download_call(settings.VERIFY_SSL)
+            except (httpx.ConnectError, ssl.SSLCertVerificationError):
+                res = await _download_call(False)
+
+            if res.status_code == 401:
+                # Token expired, invalidate and retry once
+                self.token_manager.access_token = None
+                headers = await self._get_auth_headers(user_email=user_email)
+                res = await _download_call(False)
+
+            if res.status_code != 200:
+                logger.error(f"Ironclad attachment download failed: HTTP {res.status_code} for {url}")
+                raise HTTPException(
+                    status_code=res.status_code if res.status_code in (403, 404) else status.HTTP_502_BAD_GATEWAY,
+                    detail=f"Unable to retrieve attachment from Ironclad API (Status: {res.status_code})."
+                )
+
+            content_type = res.headers.get("content-type") or "application/pdf"
+            cd = res.headers.get("content-disposition", "")
+            filename = f"contract_{record_id}_{attachment_key}.pdf"
+            if "filename=" in cd:
+                import re
+                m = re.search(r'filename="?([^";]+)"?', cd)
+                if m:
+                    filename = m.group(1).strip()
+
+            return res.content, content_type, filename
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.error(f"Error streaming attachment {attachment_key} for record {record_id}: {exc}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to stream attachment: {str(exc)}"
+            )
+
     # 3. Retrieve All Allowed Whitelisted Records (Filtered to the 3 types)
     # -------------------------------------------------------------------------
     async def fetch_allowed_contracts(self, search: Optional[str] = None, user_email: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -422,6 +483,8 @@ class IroncladService:
                     fn = att_data.get("filename") or f"{name}.pdf"
                     ct = att_data.get("contentType") or "application/pdf"
                     direct_href = att_data.get("href") or ""
+                    stream_view = f"/api/v1/contracts/{record_uuid}/attachments/{att_key}/stream?download=false"
+                    stream_download = f"/api/v1/contracts/{record_uuid}/attachments/{att_key}/stream?download=true"
                     clean_attachments.append({
                         "id": str(att_key),
                         "key": str(att_key),
@@ -432,9 +495,9 @@ class IroncladService:
                         "file_hash": att_data.get("fileHash"),
                         "hash_algorithm": att_data.get("hashAlgorithm", "sha256"),
                         "href": direct_href,
-                        "url": direct_href,
-                        "view_url": direct_href,
-                        "download_url": direct_href,
+                        "url": stream_view,
+                        "view_url": stream_view,
+                        "download_url": stream_download,
                         "can_view": True,
                         "can_download": True
                     })

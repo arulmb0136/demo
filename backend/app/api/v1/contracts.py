@@ -1,5 +1,9 @@
 from typing import List, Optional, Dict, Any
-from fastapi import APIRouter, Depends, Query, HTTPException, status
+from fastapi import APIRouter, Depends, Query, HTTPException, status, Response, Request
+from sqlalchemy.orm import Session
+from app.core.database import get_db
+from app.core.config import settings
+from jose import jwt, JWTError
 from app.core.security import require_permission, get_current_user
 from app.models.user import User
 from app.schemas.contract import (
@@ -13,8 +17,9 @@ router = APIRouter(prefix="/contracts", tags=["Contracts (Ironclad Live)"])
 
 def filter_attachments_for_user(attachments: List[Dict[str, Any]], record_id: str, user: User) -> List[Dict[str, Any]]:
     """
-    Evaluates current user's permissions and passes through the exact Ironclad href
-    for view and download actions.
+    Option 1: Secure Backend Stream Gateway.
+    Evaluates current user's permissions and generates server-side streaming URLs
+    that securely access Ironclad attachments using the server-side OAuth2 Bearer token.
     """
     user_perms = set(user.permissions or [])
     is_admin = user.role == "admin"
@@ -24,22 +29,25 @@ def filter_attachments_for_user(attachments: List[Dict[str, Any]], record_id: st
     filtered = []
     for att in attachments:
         item = dict(att)
-        # Use the direct link present in the Ironclad record
+        key = str(item.get("key") or item.get("id"))
         ironclad_href = item.get("href") or item.get("url") or ""
+
+        stream_view_url = f"/api/v1/contracts/{record_id}/attachments/{key}/stream?download=false"
+        stream_download_url = f"/api/v1/contracts/{record_id}/attachments/{key}/stream?download=true"
 
         item["can_view"] = can_view
         item["can_download"] = can_download
         item["href"] = ironclad_href
 
         if can_view:
-            item["view_url"] = ironclad_href
-            item["url"] = ironclad_href
+            item["view_url"] = stream_view_url
+            item["url"] = stream_view_url
         else:
             item["view_url"] = None
             item["url"] = None
 
         if can_download:
-            item["download_url"] = ironclad_href
+            item["download_url"] = stream_download_url
         else:
             item["download_url"] = None
 
@@ -207,3 +215,81 @@ async def get_contract_detail(
     record["attachments"] = filter_attachments_for_user(record.get("attachments", []), record["id"], current_user)
 
     return record
+@router.get("/{record_id}/attachments/{attachment_key}/stream")
+async def stream_contract_attachment(
+    record_id: str,
+    attachment_key: str,
+    download: bool = Query(False, description="If True, triggers file download, else inline viewing"),
+    token: Optional[str] = Query(None, description="Auth token for direct browser/iframe preview"),
+    request: Request = None,
+    db: Session = Depends(get_db)
+):
+    """
+    Option 1: Secure Backend Stream Gateway:
+    Streams attachment binary data directly from Ironclad with server-side OAuth2 Bearer token.
+    Supports JWT via Authorization header or token query parameter (for browser iframes/images).
+    """
+    # 1. Resolve user token from query param or header
+    jwt_token = token
+    if not jwt_token and request:
+        auth_hdr = request.headers.get("authorization", "")
+        if auth_hdr.startswith("Bearer "):
+            jwt_token = auth_hdr.replace("Bearer ", "").strip()
+
+    if not jwt_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication token is required to access document attachments.",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+
+    # 2. Decode user and verify authorization
+    try:
+        payload = jwt.decode(jwt_token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        user_email: str = payload.get("sub")
+        if not user_email:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload.")
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"Token validation failed: {str(e)}")
+
+    user = db.query(User).filter(User.email == user_email).first()
+    if not user or not user.is_active:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User account is inactive or not found.")
+
+    # 3. RBAC Enforcement
+    user_perms = set(user.permissions or [])
+    is_admin = user.role == "admin"
+    can_view = is_admin or bool(user_perms.intersection({"contracts:view", "view", "read", "contracts:download", "download"}))
+    can_download = is_admin or bool(user_perms.intersection({"contracts:download", "download"}))
+
+    if download and not can_download:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Permission Denied: You lack 'contracts:download' permission to download this document."
+        )
+    if not download and not can_view:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Permission Denied: You lack 'contracts:view' permission to view this document."
+        )
+
+    # 4. Stream from Ironclad API via server-side OAuth2 token
+    content, content_type, filename = await ironclad_service.get_attachment_stream(
+        record_id=record_id,
+        attachment_key=attachment_key,
+        user_email=user.email
+    )
+
+    disposition = "attachment" if download else "inline"
+    headers = {
+        "Content-Disposition": f'{disposition}; filename="{filename}"',
+        "Content-Length": str(len(content)),
+        "Access-Control-Expose-Headers": "Content-Disposition",
+        "Cache-Control": "private, max-age=300",
+    }
+
+    return Response(
+        content=content,
+        media_type=content_type,
+        headers=headers
+    )

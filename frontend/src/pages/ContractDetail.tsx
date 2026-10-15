@@ -65,7 +65,11 @@ export const ContractDetail: React.FC = () => {
   };
 
   const copyDocumentLink = (url: string, keyName: string) => {
-    const fullUrl = url.startsWith('http') ? url : `${window.location.origin}${url}`;
+    const token = localStorage.getItem('auth_token') || '';
+    const rawUrl = url.startsWith('http') ? url : `${window.location.origin}${url}`;
+    const fullUrl = token
+      ? (rawUrl.includes('token=') ? rawUrl : `${rawUrl}${rawUrl.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`)
+      : rawUrl;
     navigator.clipboard.writeText(fullUrl);
     setCopiedLinkKey(keyName);
     setTimeout(() => setCopiedLinkKey(null), 2000);
@@ -78,9 +82,18 @@ export const ContractDetail: React.FC = () => {
 
   const handleDownloadDocument = (att: ContractAttachment) => {
     if (!att.can_download || !att.download_url) return;
+    const token = localStorage.getItem('auth_token') || '';
+    const rawUrl = att.download_url.startsWith('http')
+      ? att.download_url
+      : `${window.location.origin}${att.download_url}`;
+    const downloadUrl = token
+      ? (rawUrl.includes('token=') ? rawUrl : `${rawUrl}${rawUrl.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`)
+      : rawUrl;
+
     const link = document.createElement('a');
-    link.href = att.download_url;
+    link.href = downloadUrl;
     link.download = att.filename || att.name;
+    link.target = '_blank';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);

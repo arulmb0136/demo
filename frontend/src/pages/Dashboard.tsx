@@ -21,9 +21,9 @@ type TabType = 'grid' | 'table' | 'bi';
 
 const ALLOWED_TYPES = [
   'All Types',
-  'Property Service Contract',
-  'Purchase & Sales Agreement',
-  'General Services Agreement',
+  'Property Service Contract (BH)',
+  'Purchase & Sale Agreement (BH)',
+  'General Services Agreement (BH)',
 ];
 
 export const Dashboard: React.FC = () => {
@@ -361,8 +361,9 @@ export const Dashboard: React.FC = () => {
                 <th style={{ padding: '0.85rem 1rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>TITLE</th>
                 <th style={{ padding: '0.85rem 1rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>RECORD TYPE</th>
                 <th style={{ padding: '0.85rem 1rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>COUNTERPARTY</th>
-                <th style={{ padding: '0.85rem 1rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>VALUE</th>
-                <th style={{ padding: '0.85rem 1rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>AGREEMENT DATE</th>
+                <th style={{ padding: '0.85rem 1rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>COMMUNITY</th>
+                <th style={{ padding: '0.85rem 1rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>EFFECTIVE</th>
+                <th style={{ padding: '0.85rem 1rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>EXPIRATION</th>
                 <th style={{ padding: '0.85rem 1rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>STATUS</th>
                 <th style={{ padding: '0.85rem 1rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>DOCS</th>
                 <th style={{ padding: '0.85rem 1rem', fontSize: '0.75rem', color: 'var(--text-muted)', textAlign: 'right' }}>ACTION</th>
@@ -381,34 +382,37 @@ export const Dashboard: React.FC = () => {
                   className="hover-row"
                 >
                   <td style={{ padding: '0.85rem 1rem', fontFamily: 'monospace', fontSize: '0.75rem', color: 'var(--accent-primary)', fontWeight: 600 }}>
-                    {c.id}
+                    {c.ironclad_id || c.id}
                   </td>
-                  <td style={{ padding: '0.85rem 1rem', fontWeight: 600, color: 'var(--text-primary)', maxWidth: '280px' }}>
-                    <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.title}</div>
+                  <td style={{ padding: '0.85rem 1rem', fontWeight: 600, color: 'var(--text-primary)', maxWidth: '240px' }}>
+                    <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.name || c.title}</div>
                   </td>
                   <td style={{ padding: '0.85rem 1rem', fontSize: '0.75rem' }}>
                     <span style={{ padding: '0.2rem 0.5rem', borderRadius: '4px', backgroundColor: 'var(--bg-input)', border: '1px solid var(--border-color)', fontWeight: 600 }}>
-                      {c.record_type}
+                      {c.type_display_name || c.record_type}
                     </span>
                   </td>
                   <td style={{ padding: '0.85rem 1rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
                     {c.counterparty_name}
                   </td>
-                  <td style={{ padding: '0.85rem 1rem', fontWeight: 700, color: 'var(--text-primary)', fontSize: '0.85rem' }}>
-                    {formatCurrency(c.contract_value, c.currency)}
+                  <td style={{ padding: '0.85rem 1rem', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                    {c.community_name || 'N/A'}
                   </td>
                   <td style={{ padding: '0.85rem 1rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                    {formatDate(c.agreement_date)}
+                    {formatDate(c.effective_date || c.agreement_date)}
+                  </td>
+                  <td style={{ padding: '0.85rem 1rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                    {formatDate(c.expiration_date || c.completion_date)}
                   </td>
                   <td style={{ padding: '0.85rem 1rem' }}>
                     <span className="badge" style={{ fontSize: '0.7rem' }}>
-                      {c.status}
+                      {c.enhanced_status || c.status}
                     </span>
                   </td>
                   <td style={{ padding: '0.85rem 1rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
                       <FileText size={13} style={{ color: 'var(--accent-primary)' }} />
-                      <span>{c.attachments?.length || 0}</span>
+                      <span>{c.attachment_count ?? (c.attachments?.length || 0)}</span>
                     </div>
                   </td>
                   <td style={{ padding: '0.85rem 1rem', textAlign: 'right' }}>

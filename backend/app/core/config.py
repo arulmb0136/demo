@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     IRONCLAD_CLIENT_ID: str = ""
     IRONCLAD_CLIENT_SECRET: str = ""
     IRONCLAD_AS_USER_EMAIL: str = ""
+    VERIFY_SSL: bool = True
 
     model_config = SettingsConfigDict(
         env_file=(".env", "../.env", "backend/.env"),

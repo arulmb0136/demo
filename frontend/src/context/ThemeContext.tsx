@@ -16,48 +16,48 @@ export const THEME_OPTIONS: ThemeOption[] = [
     previewAccent: '#2563eb',
     description: 'Crisp arctic white with royal blue'
   },
-  {
-    key: 'deep-blue',
-    name: 'Deep Blue',
-    previewBg: '#060d1a',
-    previewAccent: '#0ea5e9',
-    description: 'Midnight navy with sapphire ambiance'
-  },
-  {
-    key: 'pastel-pink',
-    name: 'Pastel Pink',
-    previewBg: '#fff1f2',
-    previewAccent: '#f43f5e',
-    description: 'Soft blush petal with warm coral tones'
-  },
-  {
-    key: 'charcoal-grey',
-    name: 'Charcoal Grey',
-    previewBg: '#121212',
-    previewAccent: '#737373',
-    description: 'Minimalist matte carbon & graphite'
-  },
-  {
-    key: 'bright-yellow',
-    name: 'Bright Yellow',
-    previewBg: '#171510',
-    previewAccent: '#f59e0b',
-    description: 'High-contrast bold amber & cyber gold'
-  },
+  // {
+  //   key: 'deep-blue',
+  //   name: 'Deep Blue',
+  //   previewBg: '#060d1a',
+  //   previewAccent: '#0ea5e9',
+  //   description: 'Midnight navy with sapphire ambiance'
+  // },
+  // {
+  //   key: 'pastel-pink',
+  //   name: 'Pastel Pink',
+  //   previewBg: '#fff1f2',
+  //   previewAccent: '#f43f5e',
+  //   description: 'Soft blush petal with warm coral tones'
+  // },
+  // {
+  //   key: 'charcoal-grey',
+  //   name: 'Charcoal Grey',
+  //   previewBg: '#121212',
+  //   previewAccent: '#737373',
+  //   description: 'Minimalist matte carbon & graphite'
+  // },
+  // {
+  //   key: 'bright-yellow',
+  //   name: 'Bright Yellow',
+  //   previewBg: '#171510',
+  //   previewAccent: '#f59e0b',
+  //   description: 'High-contrast bold amber & cyber gold'
+  // },
   {
     key: 'linkedin',
-    name: 'LinkedIn Theme',
+    name: 'Modern',
     previewBg: '#f3f2ef',
     previewAccent: '#0a66c2',
     description: 'Executive corporate navy & clean canvas'
-  },
-  {
-    key: 'windows',
-    name: 'Windows Theme',
-    previewBg: '#f3f3f3',
-    previewAccent: '#0078d4',
-    description: 'Fluent mica slate with Windows Aero blue'
   }
+  // {
+  //   key: 'windows',
+  //   name: 'Windows Theme',
+  //   previewBg: '#f3f3f3',
+  //   previewAccent: '#0078d4',
+  //   description: 'Fluent mica slate with Windows Aero blue'
+  // }
 ];
 
 interface ThemeContextType {

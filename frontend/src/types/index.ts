@@ -30,34 +30,76 @@ export interface User {
 export type AllowedRecordType =
   | 'Property Service Contract'
   | 'Purchase & Sales Agreement'
-  | 'General Services Agreement';
+  | 'General Services Agreement'
+  | 'Property Service Contract (BH)'
+  | 'Purchase & Sale Agreement (BH)'
+  | 'General Services Agreement (BH)'
+  | 'propertyServiceContractBh'
+  | 'purchaseSaleAgreementBh'
+  | 'generalServicesAgreementBh';
 
 export interface ContractAttachment {
   id: string | number;
   name: string;
+  filename?: string;
   key: string;
   content_type: string;
-  file_size: number;
-  url: string;
+  file_size?: number;
+  file_hash?: string;
+  hash_algorithm?: string;
+  url?: string;
+  view_url?: string | null;
+  download_url?: string | null;
+  can_view?: boolean;
+  can_download?: boolean;
 }
 
 export interface Contract {
   id: string; // Ironclad Record ID
   ironclad_id: string;
+  name?: string;
   title: string;
+  type?: string;
+  type_display_name?: string;
   record_type: AllowedRecordType | string;
-  template_name: string;
-  status: string; // draft, in_review, out_for_signature, signed, completed
+  template_name?: string;
+  status: string; // active, indeterminate, draft, in_review, signed, completed
+  enhanced_status?: string;
+  status_message?: string;
+  remaining_duration?: string;
+  event_date?: string;
   counterparty_name: string;
+  contracting_entity?: string;
+  community_name?: string;
+  property_id?: string;
+  agreement_type?: string;
+  agreement_date?: string;
+  effective_date?: string;
+  expiration_date?: string;
+  termination_date?: string;
+  renewal_type?: string;
+  initial_term_length?: string;
+  renewal_term_length?: string;
+  renewal_opt_out_date?: string;
+  renewal_opt_out_period?: string;
+  termination_notice_period?: string;
+  times_renewed?: number | string;
+  attachment_count?: number;
+  has_attachments?: boolean;
   contract_value: number;
   currency: string;
-  agreement_date?: string;
   start_date?: string;
   completion_date?: string;
   last_synced_date?: string;
+  last_updated?: string;
   creator_email?: string;
   department?: string;
-  attributes: Record<string, any>;
+  attributes?: Record<string, any>;
+  properties?: Record<string, any>;
+  permissions?: {
+    can_view_attachments?: boolean;
+    can_download_attachments?: boolean;
+  };
   attachments: ContractAttachment[];
 }
 

@@ -1,4 +1,5 @@
 from typing import List, Optional, Dict, Any
+from urllib.parse import quote
 from fastapi import APIRouter, Depends, Query, HTTPException, status, Response
 from app.core.security import require_permission, get_current_user
 from app.models.user import User
@@ -11,6 +12,42 @@ from app.services.ironclad_service import ironclad_service, ALLOWED_RECORD_TYPES
 
 router = APIRouter(prefix="/contracts", tags=["Contracts (Ironclad Live)"])
 
+def filter_attachments_for_user(attachments: List[Dict[str, Any]], record_id: str, user: User) -> List[Dict[str, Any]]:
+    """
+    Server-side permission filter:
+    Evaluates current user's permissions and only provides download/view action URLs
+    if the user is explicitly authorized.
+    """
+    user_perms = set(user.permissions or [])
+    is_admin = user.role == "admin"
+    can_view = is_admin or bool(user_perms.intersection({"contracts:view", "view", "read", "contracts:download", "download"}))
+    can_download = is_admin or bool(user_perms.intersection({"contracts:download", "download"}))
+
+    filtered = []
+    for att in attachments:
+        item = dict(att)
+        att_key = item.get("key", "")
+        safe_key = quote(str(att_key), safe="")
+
+        item["can_view"] = can_view
+        item["can_download"] = can_download
+
+        if can_view:
+            item["view_url"] = f"/api/v1/contracts/{record_id}/attachments/{safe_key}?disposition=inline"
+            item["url"] = item["view_url"]
+        else:
+            item["view_url"] = None
+            item["url"] = None
+
+        if can_download:
+            item["download_url"] = f"/api/v1/contracts/{record_id}/attachments/{safe_key}?disposition=attachment"
+        else:
+            item["download_url"] = None
+
+        filtered.append(item)
+    return filtered
+
+
 @router.get("/", response_model=List[ContractDetailResponse])
 async def list_allowed_contracts(
     search: Optional[str] = Query(None, description="Search by title, counterparty, or record type"),
@@ -21,9 +58,9 @@ async def list_allowed_contracts(
     """
     Fetches live records directly from Ironclad API (GET /records/ids & GET /records/{id}).
     Strictly filters for the 3 whitelisted record types:
-      - Property Service Contract
-      - Purchase & Sales Agreement
-      - General Services Agreement
+      - Property Service Contract (BH) / propertyServiceContractBh
+      - Purchase & Sale Agreement (BH) / purchaseSaleAgreementBh
+      - General Services Agreement (BH) / generalServicesAgreementBh
     No contracts are stored in the database.
     """
     contracts = await ironclad_service.fetch_allowed_contracts(search=search, user_email=current_user.email)
@@ -31,7 +68,7 @@ async def list_allowed_contracts(
     # Apply in-memory filters if specified
     filtered = contracts
     if record_type:
-        filtered = [c for c in filtered if c.get("record_type") == record_type]
+        filtered = [c for c in filtered if c.get("record_type") == record_type or c.get("type") == record_type or c.get("type_display_name") == record_type]
     if status:
         filtered = [c for c in filtered if c.get("status") == status]
     if search:
@@ -39,10 +76,20 @@ async def list_allowed_contracts(
         filtered = [
             c for c in filtered
             if s in c.get("title", "").lower()
+            or s in c.get("name", "").lower()
             or s in c.get("counterparty_name", "").lower()
             or s in c.get("record_type", "").lower()
             or s in c.get("ironclad_id", "").lower()
+            or s in c.get("community_name", "").lower()
         ]
+
+    # Server-side attachment permission filter
+    for c in filtered:
+        c["attachments"] = filter_attachments_for_user(c.get("attachments", []), c["id"], current_user)
+        c["permissions"] = {
+            "can_view_attachments": any(a.get("can_view") for a in c["attachments"]) if c["attachments"] else True,
+            "can_download_attachments": any(a.get("can_download") for a in c["attachments"]) if c["attachments"] else False
+        }
 
     return filtered
 
@@ -51,7 +98,7 @@ async def list_record_ids(
     current_user: User = Depends(require_permission("contracts:view"))
 ):
     """
-    Fetches raw record IDs directly from Ironclad Public API: GET /records/ids.
+    Fetches raw record IDs directly from Ironclad Public API: GET /records/ids?types=...
     OAuth Scope: public.records.readRecords
     """
     return await ironclad_service.fetch_record_ids(user_email=current_user.email)
@@ -61,25 +108,18 @@ async def check_new_contracts_notifications(
     since: Optional[str] = Query(None, description="ISO timestamp since last check"),
     current_user: User = Depends(require_permission("contracts:view"))
 ):
-    """
-    Notification endpoint polled after login. Alerts the user when new contracts
-    or agreements arrive from Ironclad.
-    """
     return await ironclad_service.check_new_agreements(since_iso=since, user_email=current_user.email)
 
 @router.get("/bi-metrics", response_model=BiMetricsResponse)
 async def get_bi_analytics(
     current_user: User = Depends(require_permission("contracts:view"))
 ):
-    """
-    Calculates live analytics metrics directly across Ironclad live repository data.
-    """
     contracts = await ironclad_service.fetch_allowed_contracts(user_email=current_user.email)
     total_val = sum(c.get("contract_value", 0.0) for c in contracts)
     total_count = len(contracts)
-    signed_count = sum(1 for c in contracts if c.get("status") in ["signed", "completed"])
+    signed_count = sum(1 for c in contracts if c.get("status") in ["signed", "completed", "active"])
     active_count = sum(1 for c in contracts if c.get("status") not in ["archived", "draft"])
-    pending_count = sum(1 for c in contracts if c.get("status") in ["in_review", "review", "draft"])
+    pending_count = sum(1 for c in contracts if c.get("status") in ["in_review", "review", "draft", "indeterminate"])
 
     status_dist: Dict[str, int] = {}
     dept_dist: Dict[str, int] = {}
@@ -87,13 +127,13 @@ async def get_bi_analytics(
     counterparties: Dict[str, float] = {}
 
     for c in contracts:
-        st = c.get("status", "unknown")
+        st = c.get("status", "active")
         status_dist[st] = status_dist.get(st, 0) + 1
 
-        dp = c.get("department", "General")
+        dp = c.get("department", "Operations")
         dept_dist[dp] = dept_dist.get(dp, 0) + 1
 
-        rt = c.get("record_type", "Other")
+        rt = c.get("type_display_name") or c.get("record_type") or "Other"
         type_dist[rt] = type_dist.get(rt, 0) + 1
 
         cp = c.get("counterparty_name", "Unknown")
@@ -105,11 +145,11 @@ async def get_bi_analytics(
     ]
 
     monthly_trends = [
-        {"month": "May", "count": 2, "volume": 350000},
-        {"month": "Jun", "count": 3, "volume": 520000},
-        {"month": "Jul", "count": 4, "volume": 710000},
-        {"month": "Aug", "count": 3, "volume": 680000},
-        {"month": "Sep", "count": 5, "volume": 940000},
+        {"month": "May", "count": max(1, total_count // 3), "volume": total_val * 0.3},
+        {"month": "Jun", "count": max(1, total_count // 2), "volume": total_val * 0.5},
+        {"month": "Jul", "count": max(2, total_count // 2), "volume": total_val * 0.6},
+        {"month": "Aug", "count": max(2, total_count // 2), "volume": total_val * 0.7},
+        {"month": "Sep", "count": max(3, total_count - 2), "volume": total_val * 0.9},
         {"month": "Oct", "count": total_count, "volume": total_val}
     ]
 
@@ -135,6 +175,7 @@ async def get_contract_detail(
     """
     Retrieves full details for a single Ironclad Record: GET /records/{id}.
     OAuth Scope: public.records.readRecords
+    Filters attachments according to user's permissions directly on backend.
     """
     record = await ironclad_service.fetch_record_by_id(record_id, user_email=current_user.email)
     if not record:
@@ -143,11 +184,22 @@ async def get_contract_detail(
             detail=f"Ironclad Record with ID '{record_id}' not found."
         )
 
-    if record.get("record_type") not in ALLOWED_RECORD_TYPES:
+    if record.get("type") not in ALLOWED_RECORD_TYPES and record.get("record_type") not in ALLOWED_RECORD_TYPES:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Access Denied: Record type '{record.get('record_type')}' is not authorized."
+            detail=f"Access Denied: Record type '{record.get('type')}' is not authorized."
         )
+
+    user_perms = set(current_user.permissions or [])
+    is_admin = current_user.role == "admin"
+    can_view = is_admin or bool(user_perms.intersection({"contracts:view", "view", "read", "contracts:download", "download"}))
+    can_download = is_admin or bool(user_perms.intersection({"contracts:download", "download"}))
+
+    record["permissions"] = {
+        "can_view_attachments": can_view,
+        "can_download_attachments": can_download
+    }
+    record["attachments"] = filter_attachments_for_user(record.get("attachments", []), record["id"], current_user)
 
     return record
 
@@ -160,21 +212,21 @@ async def stream_contract_attachment(
 ):
     """
     Retrieves and streams an attachment on a record: GET /records/{id}/attachments/{key}.
-    OAuth Scope: public.records.readAttachments
     - If disposition=attachment: Requires 'contracts:download' permission.
     - If disposition=inline: Requires 'contracts:view' permission.
     """
-    # Permission verification
     user_perms = set(current_user.permissions or [])
-    if current_user.role != "admin":
+    is_admin = current_user.role == "admin"
+
+    if not is_admin:
         if disposition == "attachment":
             if not user_perms.intersection({"contracts:download", "download"}):
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Forbidden: You do not have permission to download contract documents."
                 )
-        else: # inline preview
-            if not user_perms.intersection({"contracts:view", "read", "view", "contracts:download", "download"}):
+        else:
+            if not user_perms.intersection({"contracts:view", "view", "read", "contracts:download", "download"}):
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Forbidden: You do not have permission to view contract documents."

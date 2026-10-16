@@ -64,9 +64,11 @@ export const ContractDetail: React.FC = () => {
     setTimeout(() => setCopiedKey(null), 2000);
   };
 
+  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+
   const copyDocumentLink = (url: string, keyName: string) => {
-    const token = localStorage.getItem('auth_token') || '';
-    const rawUrl = url.startsWith('http') ? url : `${window.location.origin}${url}`;
+    const token = localStorage.getItem('ironclad_token') || '';
+    const rawUrl = url.startsWith('http') ? url : `${API_BASE_URL}${url}`;
     const fullUrl = token
       ? (rawUrl.includes('token=') ? rawUrl : `${rawUrl}${rawUrl.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`)
       : rawUrl;
@@ -82,10 +84,10 @@ export const ContractDetail: React.FC = () => {
 
   const handleDownloadDocument = (att: ContractAttachment) => {
     if (!att.can_download || !att.download_url) return;
-    const token = localStorage.getItem('auth_token') || '';
+    const token = localStorage.getItem('ironclad_token') || '';
     const rawUrl = att.download_url.startsWith('http')
       ? att.download_url
-      : `${window.location.origin}${att.download_url}`;
+      : `${API_BASE_URL}${att.download_url}`;
     const downloadUrl = token
       ? (rawUrl.includes('token=') ? rawUrl : `${rawUrl}${rawUrl.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`)
       : rawUrl;

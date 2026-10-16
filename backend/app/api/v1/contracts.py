@@ -124,10 +124,16 @@ async def get_bi_analytics(
     current_user: User = Depends(require_permission("contracts:view"))
 ):
     contracts = await ironclad_service.fetch_allowed_contracts(
-        record_type=record_type,
-        search_query=search,
+        search=search,
         user_email=current_user.email
     )
+    if record_type and record_type != "All Types":
+        contracts = [
+            c for c in contracts
+            if c.get("record_type") == record_type
+            or c.get("type") == record_type
+            or c.get("type_display_name") == record_type
+        ]
     total_val = sum(c.get("contract_value", 0.0) for c in contracts)
     total_count = len(contracts)
     signed_count = sum(1 for c in contracts if c.get("status") in ["signed", "completed", "active"])

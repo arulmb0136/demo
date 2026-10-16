@@ -30,9 +30,10 @@ export const AttachmentViewerModal: React.FC<AttachmentViewerModalProps> = ({
 
   if (!isOpen || !attachment) return null;
 
-  const token = localStorage.getItem('auth_token') || '';
+  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+  const token = localStorage.getItem('ironclad_token') || '';
   const rawUrl = attachment.view_url || attachment.url || attachment.download_url || '';
-  const directUrl = rawUrl.startsWith('http') ? rawUrl : `${window.location.origin}${rawUrl}`;
+  const directUrl = rawUrl.startsWith('http') ? rawUrl : `${API_BASE_URL}${rawUrl}`;
   // Secure Stream Gateway authenticated URL with token parameter for iframe / direct preview
   const authenticatedUrl = token
     ? (directUrl.includes('token=') ? directUrl : `${directUrl}${directUrl.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`)
@@ -46,7 +47,7 @@ export const AttachmentViewerModal: React.FC<AttachmentViewerModalProps> = ({
     if (!canDownload || !attachment.download_url) return;
     const rawDl = attachment.download_url.startsWith('http')
       ? attachment.download_url
-      : `${window.location.origin}${attachment.download_url}`;
+      : `${API_BASE_URL}${attachment.download_url}`;
     const downloadUrl = token
       ? (rawDl.includes('token=') ? rawDl : `${rawDl}${rawDl.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`)
       : rawDl;

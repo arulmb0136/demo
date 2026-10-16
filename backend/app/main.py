@@ -15,7 +15,7 @@ from app.api.v1.users import router as users_router
 
 app = FastAPI(
     title=settings.APP_NAME,
-    description="Ironclad Live Contract Hub & RBAC Management Platform",
+    description="IronClad Contracts Hub & RBAC Management Platform",
     version="2.0.0",
     docs_url="/docs",
     redoc_url="/redoc"

@@ -15,10 +15,12 @@ from app.services.ironclad_service import ironclad_service, ALLOWED_RECORD_TYPES
 
 router = APIRouter(prefix="/contracts", tags=["Contracts (Ironclad Live)"])
 
-def filter_attachments_for_user(attachments: List[Dict[str, Any]], user: User) -> List[Dict[str, Any]]:
+def filter_attachments_for_user(attachments: List[Dict[str, Any]], record_id: str, user: User) -> List[Dict[str, Any]]:
     """
-    Evaluates current user's permissions and passes direct Ironclad attachment links
-    without modifying them, only if user possesses permissions.
+    Secure Backend Stream Gateway:
+    Evaluates current user's permissions and generates server-side streaming URLs
+    that securely access Ironclad attachments using the server-side OAuth2 Bearer token.
+    Direct Ironclad API links are never exposed to the frontend to eliminate token leakage risks.
     """
     user_perms = set(user.permissions or [])
     is_admin = user.role == "admin" or "admin" in user_perms
@@ -28,22 +30,24 @@ def filter_attachments_for_user(attachments: List[Dict[str, Any]], user: User) -
     filtered = []
     for att in attachments:
         item = dict(att)
-        # Preserve the exact, unmodified link returned from the Ironclad API
-        direct_link = item.get("href") or item.get("url") or item.get("view_url") or item.get("download_url") or ""
+        key = str(item.get("key") or item.get("id"))
+
+        stream_view_url = f"/api/v1/contracts/{record_id}/attachments/{key}/stream?download=false"
+        stream_download_url = f"/api/v1/contracts/{record_id}/attachments/{key}/stream?download=true"
 
         item["can_view"] = can_view
         item["can_download"] = can_download
-        item["href"] = direct_link if (can_view or can_download) else None
+        item["href"] = None  # Do not expose internal/external Ironclad URLs to client
 
         if can_view:
-            item["view_url"] = direct_link
-            item["url"] = direct_link
+            item["view_url"] = stream_view_url
+            item["url"] = stream_view_url
         else:
             item["view_url"] = None
             item["url"] = None
 
         if can_download:
-            item["download_url"] = direct_link
+            item["download_url"] = stream_download_url
         else:
             item["download_url"] = None
 
@@ -100,9 +104,9 @@ async def list_allowed_contracts(
             or s in c.get("community_name", "").lower()
         ]
 
-    # Attach permissions and direct unmodified links
+    # Attach permissions and secure stream links
     for c in filtered:
-        c["attachments"] = filter_attachments_for_user(c.get("attachments", []), current_user)
+        c["attachments"] = filter_attachments_for_user(c.get("attachments", []), c["id"], current_user)
         c["permissions"] = {
             "can_view_attachments": any(a.get("can_view") for a in c["attachments"]) if c["attachments"] else True,
             "can_download_attachments": any(a.get("can_download") for a in c["attachments"]) if c["attachments"] else False
@@ -265,7 +269,7 @@ async def get_contract_detail(
         "can_view_attachments": can_view,
         "can_download_attachments": can_download
     }
-    record["attachments"] = filter_attachments_for_user(record.get("attachments", []), current_user)
+    record["attachments"] = filter_attachments_for_user(record.get("attachments", []), record["id"], current_user)
 
     return record
 @router.get("/{record_id}/attachments/{attachment_key}/stream")
@@ -311,7 +315,7 @@ async def stream_contract_attachment(
 
     # 3. RBAC Enforcement
     user_perms = set(user.permissions or [])
-    is_admin = user.role == "admin"
+    is_admin = user.role == "admin" or "admin" in user_perms
     can_view = is_admin or bool(user_perms.intersection({"contracts:view", "view", "read", "contracts:download", "download"}))
     can_download = is_admin or bool(user_perms.intersection({"contracts:download", "download"}))
 
@@ -324,6 +328,14 @@ async def stream_contract_attachment(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Permission Denied: You lack 'contracts:view' permission to view this document."
+        )
+
+    # Validate document-type permission
+    allowed_types = get_user_allowed_record_types(user)
+    if not is_admin and not allowed_types:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Permission Denied: You lack permission to access records of this document type."
         )
 
     # 4. Stream from Ironclad API via server-side OAuth2 token

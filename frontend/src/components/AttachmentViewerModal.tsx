@@ -30,8 +30,13 @@ export const AttachmentViewerModal: React.FC<AttachmentViewerModalProps> = ({
 
   if (!isOpen || !attachment) return null;
 
-  const directUrl = attachment.view_url || attachment.url || attachment.download_url || '';
-  const authenticatedUrl = directUrl;
+  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+  const token = localStorage.getItem('ironclad_token') || '';
+  const rawUrl = attachment.view_url || attachment.url || attachment.download_url || '';
+  const baseStreamUrl = rawUrl.startsWith('http') ? rawUrl : `${API_BASE_URL}${rawUrl}`;
+  const authenticatedUrl = token
+    ? `${baseStreamUrl}${baseStreamUrl.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`
+    : baseStreamUrl;
 
   const contentType = (attachment.content_type || 'application/pdf').toLowerCase();
   const isPdf = contentType.includes('pdf') || attachment.name?.toLowerCase().endsWith('.pdf');
@@ -39,8 +44,15 @@ export const AttachmentViewerModal: React.FC<AttachmentViewerModalProps> = ({
 
   const handleDownload = () => {
     if (!canDownload || !attachment.download_url) return;
+    const rawDl = attachment.download_url.startsWith('http')
+      ? attachment.download_url
+      : `${API_BASE_URL}${attachment.download_url}`;
+    const downloadUrl = token
+      ? `${rawDl}${rawDl.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`
+      : rawDl;
+
     const link = document.createElement('a');
-    link.href = attachment.download_url;
+    link.href = downloadUrl;
     link.target = '_blank';
     link.download = attachment.filename || attachment.name;
     document.body.appendChild(link);

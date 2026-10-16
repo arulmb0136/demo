@@ -261,7 +261,10 @@ class IroncladService:
             )
 
         headers = await self._get_auth_headers(user_email=user_email)
-        url = f"{self.api_root}/records/{record_id}/attachments/{attachment_key}"
+        if attachment_key.startswith("http"):
+            url = attachment_key
+        else:
+            url = f"{self.api_root}/records/{record_id}/attachments/{attachment_key}"
 
         async def _download_call(verify_ssl: bool = True):
             async with httpx.AsyncClient(timeout=45.0, verify=verify_ssl, follow_redirects=True) as client:

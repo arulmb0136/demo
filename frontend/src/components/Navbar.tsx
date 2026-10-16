@@ -51,7 +51,7 @@ export const Navbar: React.FC<NavbarProps> = ({ onSelectContract }) => {
           </div>
           <div>
             <div style={{ fontWeight: 700, fontSize: '1.05rem', letterSpacing: '-0.01em', lineHeight: 1.2 }}>
-              Ironclad Hub
+              IronClad Contracts
             </div>
             <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 600 }}>
               Live Contract Engine

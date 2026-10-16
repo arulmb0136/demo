@@ -54,7 +54,7 @@ export const SignIn: React.FC = () => {
             <Shield size={24} />
           </div>
           <h1 style={{ fontSize: '1.45rem', fontWeight: 700, marginBottom: '0.35rem' }}>
-            Sign In to Ironclad Hub
+            Sign In to IronClad Contracts
           </h1>
           <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
             Enter your credentials or choose a pre-seeded demo role below.

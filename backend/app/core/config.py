@@ -5,7 +5,7 @@ from pydantic import field_validator
 
 class Settings(BaseSettings):
     # App Settings
-    APP_NAME: str = "Ironclad Contract Hub API"
+    APP_NAME: str = "IronClad Contracts API"
     ENVIRONMENT: str = "production"
     DEBUG: bool = False
     PORT: int = 8000

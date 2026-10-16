@@ -64,8 +64,13 @@ export const ContractDetail: React.FC = () => {
     setTimeout(() => setCopiedKey(null), 2000);
   };
 
+  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+  const token = localStorage.getItem('ironclad_token') || '';
+
   const copyDocumentLink = (url: string, keyName: string) => {
-    navigator.clipboard.writeText(url);
+    const baseStreamUrl = url.startsWith('http') ? url : `${API_BASE_URL}${url}`;
+    const authenticatedUrl = token ? `${baseStreamUrl}${baseStreamUrl.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}` : baseStreamUrl;
+    navigator.clipboard.writeText(authenticatedUrl);
     setCopiedLinkKey(keyName);
     setTimeout(() => setCopiedLinkKey(null), 2000);
   };
@@ -77,8 +82,10 @@ export const ContractDetail: React.FC = () => {
 
   const handleDownloadDocument = (att: ContractAttachment) => {
     if (!att.can_download || !att.download_url) return;
+    const baseDlUrl = att.download_url.startsWith('http') ? att.download_url : `${API_BASE_URL}${att.download_url}`;
+    const authenticatedDl = token ? `${baseDlUrl}${baseDlUrl.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}` : baseDlUrl;
     const link = document.createElement('a');
-    link.href = att.download_url;
+    link.href = authenticatedDl;
     link.download = att.filename || att.name;
     link.target = '_blank';
     document.body.appendChild(link);

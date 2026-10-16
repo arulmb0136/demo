@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { ContractAttachment } from '../types';
+import { SecurePdfViewer } from './SecurePdfViewer';
 import {
   X,
   Download,
@@ -167,8 +168,8 @@ export const AttachmentViewerModal: React.FC<AttachmentViewerModalProps> = ({
               <span>Download</span>
             </button>
 
-            {/* Open Direct in New Tab */}
-            {directUrl && (
+            {/* Open Direct in New Tab (only if user has download permission) */}
+            {canDownload && (
               <a
                 href={authenticatedUrl}
                 target="_blank"
@@ -182,7 +183,7 @@ export const AttachmentViewerModal: React.FC<AttachmentViewerModalProps> = ({
                   gap: '0.35rem',
                   textDecoration: 'none',
                 }}
-                title="Open Direct Ironclad Link in New Window"
+                title="Open Document in New Window"
               >
                 <ExternalLink size={14} />
                 <span>Open Tab</span>
@@ -221,6 +222,11 @@ export const AttachmentViewerModal: React.FC<AttachmentViewerModalProps> = ({
 
         {/* Viewer Body Area */}
         <div
+          onContextMenu={(e) => {
+            if (!canDownload) {
+              e.preventDefault();
+            }
+          }}
           style={{
             flex: 1,
             position: 'relative',
@@ -232,16 +238,12 @@ export const AttachmentViewerModal: React.FC<AttachmentViewerModalProps> = ({
           }}
         >
           {isPdf ? (
-            /* PDF In-App Viewer */
-            <iframe
-              src={authenticatedUrl}
-              title={attachment.name}
-              style={{
-                width: '100%',
-                height: '100%',
-                border: 'none',
-                backgroundColor: '#ffffff',
-              }}
+            /* Secure Canvas-Based PDF Viewer (Zero Native Browser Download Controls) */
+            <SecurePdfViewer
+              url={authenticatedUrl}
+              token={token}
+              title={attachment.filename || attachment.name}
+              canDownload={canDownload}
             />
           ) : isImage ? (
             /* Image In-App Viewer */

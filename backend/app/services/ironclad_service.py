@@ -3,6 +3,7 @@ import ssl
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime, timedelta
 import httpx
+from fastapi import HTTPException, status
 from app.core.config import settings
 from app.core.logging import logger
 
@@ -71,7 +72,7 @@ class IroncladTokenManager:
             "grant_type": "client_credentials",
             "client_id": self.client_id,
             "client_secret": self.client_secret,
-            "scope": "public.records.readRecords"
+            "scope": "public.records.readRecords public.records.readAttachments"
         }
         headers = {
             "Content-Type": "application/x-www-form-urlencoded",
@@ -260,11 +261,19 @@ class IroncladService:
                 detail="Ironclad OAuth credentials are not configured on the server."
             )
 
-        headers = await self._get_auth_headers(user_email=user_email)
+        token = await self.token_manager.get_valid_token()
         if attachment_key.startswith("http"):
             url = attachment_key
+            headers = {"Accept": "*/*"}
         else:
             url = f"{self.api_root}/records/{record_id}/attachments/{attachment_key}"
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Accept": "*/*"
+            }
+            effective_email = self.as_user_email or (user_email if user_email and "@ironclad.demo" not in user_email else None)
+            if effective_email:
+                headers["x-as-user-email"] = effective_email
 
         async def _download_call(verify_ssl: bool = True):
             async with httpx.AsyncClient(timeout=45.0, verify=verify_ssl, follow_redirects=True) as client:
@@ -279,7 +288,9 @@ class IroncladService:
             if res.status_code == 401:
                 # Token expired, invalidate and retry once
                 self.token_manager.access_token = None
-                headers = await self._get_auth_headers(user_email=user_email)
+                new_token = await self.token_manager.get_valid_token()
+                if not attachment_key.startswith("http"):
+                    headers["Authorization"] = f"Bearer {new_token}"
                 res = await _download_call(False)
 
             if res.status_code != 200:

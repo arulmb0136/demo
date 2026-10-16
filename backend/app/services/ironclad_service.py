@@ -140,14 +140,23 @@ class IroncladService:
     # -------------------------------------------------------------------------
     # 1. List All Record IDs: GET /records/ids?types=...
     # -------------------------------------------------------------------------
-    async def fetch_record_ids(self, search: Optional[str] = None, user_email: Optional[str] = None) -> List[str]:
+    async def fetch_record_ids(
+        self,
+        search: Optional[str] = None,
+        user_email: Optional[str] = None,
+        record_types: Optional[List[str]] = None
+    ) -> List[str]:
         if not self.token_manager.has_credentials():
             logger.warning("Ironclad credentials not configured. Returning empty record list.")
             return []
 
+        if record_types is not None and len(record_types) == 0:
+            return []
+
+        types_param = ",".join(record_types) if record_types else ALLOWED_RECORD_TYPES_PARAM
         endpoint = f"{self.api_root}/records/ids"
         params: Dict[str, Any] = {
-            "types": ALLOWED_RECORD_TYPES_PARAM,
+            "types": types_param,
             "pageSize": 1000
         }
         if search:
@@ -298,21 +307,42 @@ class IroncladService:
 
     # 3. Retrieve All Allowed Whitelisted Records (Filtered to the 3 types)
     # -------------------------------------------------------------------------
-    async def fetch_allowed_contracts(self, search: Optional[str] = None, user_email: Optional[str] = None) -> List[Dict[str, Any]]:
+    async def fetch_allowed_contracts(
+        self,
+        search: Optional[str] = None,
+        user_email: Optional[str] = None,
+        record_types: Optional[List[str]] = None
+    ) -> List[Dict[str, Any]]:
         """
-        Fetches contracts for the 3 whitelisted types:
+        Fetches contracts for the allowed types:
         - propertyServiceContractBh
         - purchaseSaleAgreementBh
         - generalServicesAgreementBh
-        Tries batch GET /records?types=... first for fast retrieval, then falls back to /records/ids + /records/{id}.
+        Respects granular document-type authorization passed via record_types.
         """
         if not self.token_manager.has_credentials():
             return []
 
+        if record_types is not None and len(record_types) == 0:
+            return []
+
+        target_types = record_types if record_types is not None else [
+            "propertyServiceContractBh",
+            "purchaseSaleAgreementBh",
+            "generalServicesAgreementBh"
+        ]
+        target_types_set = set(target_types)
+        for t in list(target_types):
+            disp = TYPE_DISPLAY_NAMES.get(t)
+            if disp:
+                target_types_set.add(disp)
+
+        types_param = ",".join(target_types)
+
         # Attempt batch records list
         batch_endpoint = f"{self.api_root}/records"
         batch_params: Dict[str, Any] = {
-            "types": ALLOWED_RECORD_TYPES_PARAM,
+            "types": types_param,
             "pageSize": 100
         }
         if search:
@@ -336,7 +366,7 @@ class IroncladService:
                 if raw_list and isinstance(raw_list[0], dict) and ("properties" in raw_list[0] or "type" in raw_list[0]):
                     for item in raw_list:
                         rec = self.normalize_record(item)
-                        if rec and (rec.get("type") in ALLOWED_RECORD_TYPES or rec.get("record_type") in ALLOWED_RECORD_TYPES):
+                        if rec and (rec.get("type") in target_types_set or rec.get("record_type") in target_types_set):
                             allowed_contracts.append(rec)
                     if allowed_contracts:
                         allowed_contracts.sort(key=lambda x: x.get("last_synced_date") or x.get("last_updated") or "", reverse=True)
@@ -345,10 +375,10 @@ class IroncladService:
             logger.info(f"Batch GET /records attempt bypassed: {exc}")
 
         # Fallback to fetching IDs and normalizing individually
-        record_ids = await self.fetch_record_ids(search=search, user_email=user_email)
+        record_ids = await self.fetch_record_ids(search=search, user_email=user_email, record_types=target_types)
         for r_id in record_ids:
             record = await self.fetch_record_by_id(r_id, user_email=user_email)
-            if record and (record.get("type") in ALLOWED_RECORD_TYPES or record.get("record_type") in ALLOWED_RECORD_TYPES):
+            if record and (record.get("type") in target_types_set or record.get("record_type") in target_types_set):
                 allowed_contracts.append(record)
 
         allowed_contracts.sort(key=lambda x: x.get("last_synced_date") or x.get("last_updated") or "", reverse=True)
@@ -482,9 +512,7 @@ class IroncladService:
                 if isinstance(att_data, dict):
                     fn = att_data.get("filename") or f"{name}.pdf"
                     ct = att_data.get("contentType") or "application/pdf"
-                    direct_href = att_data.get("href") or ""
-                    stream_view = f"/api/v1/contracts/{record_uuid}/attachments/{att_key}/stream?download=false"
-                    stream_download = f"/api/v1/contracts/{record_uuid}/attachments/{att_key}/stream?download=true"
+                    direct_href = att_data.get("href") or att_data.get("url") or ""
                     clean_attachments.append({
                         "id": str(att_key),
                         "key": str(att_key),
@@ -495,9 +523,9 @@ class IroncladService:
                         "file_hash": att_data.get("fileHash"),
                         "hash_algorithm": att_data.get("hashAlgorithm", "sha256"),
                         "href": direct_href,
-                        "url": stream_view,
-                        "view_url": stream_view,
-                        "download_url": stream_download,
+                        "url": direct_href,
+                        "view_url": direct_href,
+                        "download_url": direct_href,
                         "can_view": True,
                         "can_download": True
                     })

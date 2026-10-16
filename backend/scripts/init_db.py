@@ -18,28 +18,40 @@ DEMO_USERS = [
         "full_name": "Alexander Hayes (System Administrator)",
         "password": "Admin123!",
         "role": "admin",
-        "permissions": ["contracts:view", "contracts:download", "users:manage", "roles:manage", "read", "download", "admin"]
+        "permissions": [
+            "contracts:view", "contracts:view:property_service", "contracts:view:purchase_sale", "contracts:view:general_services",
+            "contracts:download", "users:manage", "roles:manage", "read", "download", "admin"
+        ]
     },
     {
         "email": "manager@ironclad.demo",
         "full_name": "Victoria Sterling (Legal Ops Lead)",
         "password": "Manager123!",
         "role": "manager",
-        "permissions": ["contracts:view", "contracts:download", "read", "download"]
+        "permissions": [
+            "contracts:view", "contracts:view:property_service", "contracts:view:purchase_sale", "contracts:view:general_services",
+            "contracts:download", "read", "download"
+        ]
     },
     {
         "email": "editor@ironclad.demo",
         "full_name": "Julian Mercer (Contract Specialist)",
         "password": "Editor123!",
         "role": "editor",
-        "permissions": ["contracts:view", "contracts:download", "read", "download"]
+        "permissions": [
+            "contracts:view", "contracts:view:property_service", "contracts:view:purchase_sale", "contracts:view:general_services",
+            "contracts:download", "read", "download"
+        ]
     },
     {
         "email": "viewer@ironclad.demo",
         "full_name": "Claire Redfield (Compliance Auditor)",
         "password": "Viewer123!",
         "role": "viewer",
-        "permissions": ["contracts:view", "read"]
+        "permissions": [
+            "contracts:view", "contracts:view:property_service", "contracts:view:purchase_sale", "contracts:view:general_services",
+            "read"
+        ]
     }
 ]
 

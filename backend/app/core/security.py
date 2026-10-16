@@ -11,9 +11,70 @@ from app.core.logging import logger
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
+# Granular Document-Type Permissions Mapping
+RECORD_TYPE_PERMISSION_MAP = {
+    "propertyServiceContractBh": {
+        "contracts:view:property_service",
+        "contracts:view:propertyServiceContractBh",
+        "Property Service Contract",
+        "propertyServiceContractBh"
+    },
+    "purchaseSaleAgreementBh": {
+        "contracts:view:purchase_sale",
+        "contracts:view:purchaseSaleAgreementBh",
+        "Purchase & Sales Agreement",
+        "purchaseSaleAgreementBh"
+    },
+    "generalServicesAgreementBh": {
+        "contracts:view:general_services",
+        "contracts:view:generalServicesAgreementBh",
+        "General Services Agreement",
+        "generalServicesAgreementBh"
+    }
+}
+
+ALL_ALLOWED_RECORD_TYPES = [
+    "propertyServiceContractBh",
+    "purchaseSaleAgreementBh",
+    "generalServicesAgreementBh"
+]
+
+def get_user_allowed_record_types(user) -> List[str]:
+    """
+    Evaluates the user's role and permissions to determine which of the 3 whitelisted
+    Ironclad record types the user is authorized to view.
+    - Admins are authorized for all 3 types.
+    - Non-admins are authorized only for types matching their assigned type permissions.
+    - If a user has general 'contracts:view' but no granular type restrictions assigned yet,
+      all 3 types are granted for backwards compatibility.
+    """
+    if getattr(user, "role", None) == "admin":
+        return list(ALL_ALLOWED_RECORD_TYPES)
+
+    user_perms = set(getattr(user, "permissions", []) or [])
+    if "admin" in user_perms:
+        return list(ALL_ALLOWED_RECORD_TYPES)
+
+    allowed = []
+    has_any_granular = False
+    for r_type, perm_keys in RECORD_TYPE_PERMISSION_MAP.items():
+        if user_perms.intersection(perm_keys):
+            allowed.append(r_type)
+        if any(pk in user_perms for pk in perm_keys):
+            has_any_granular = True
+
+    # Backwards compatibility: if user has general 'contracts:view' but no granular type restrictions were configured
+    if not has_any_granular and bool(user_perms.intersection({"contracts:view", "read", "view"})):
+        return list(ALL_ALLOWED_RECORD_TYPES)
+
+    return allowed
+
 # Aliases to guarantee backward and cross-compatibility
 PERMISSION_ALIASES = {
     "contracts:view": {"contracts:view", "read", "view"},
+    "contracts:view:property_service": {"contracts:view:property_service", "contracts:view:propertyServiceContractBh", "Property Service Contract", "admin"},
+    "contracts:view:purchase_sale": {"contracts:view:purchase_sale", "contracts:view:purchaseSaleAgreementBh", "Purchase & Sales Agreement", "admin"},
+    "contracts:view:general_services": {"contracts:view:general_services", "contracts:view:generalServicesAgreementBh", "General Services Agreement", "admin"},
     "contracts:download": {"contracts:download", "download"},
     "users:manage": {"users:manage", "admin"},
     "roles:manage": {"roles:manage", "admin"},

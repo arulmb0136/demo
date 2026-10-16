@@ -4,50 +4,46 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.config import settings
 from jose import jwt, JWTError
-from app.core.security import require_permission, get_current_user
+from app.core.security import require_permission, get_current_user, get_user_allowed_record_types
 from app.models.user import User
 from app.schemas.contract import (
     ContractDetailResponse,
     ContractNotificationItem,
     BiMetricsResponse
 )
-from app.services.ironclad_service import ironclad_service, ALLOWED_RECORD_TYPES
+from app.services.ironclad_service import ironclad_service, ALLOWED_RECORD_TYPES, TYPE_DISPLAY_NAMES
 
 router = APIRouter(prefix="/contracts", tags=["Contracts (Ironclad Live)"])
 
-def filter_attachments_for_user(attachments: List[Dict[str, Any]], record_id: str, user: User) -> List[Dict[str, Any]]:
+def filter_attachments_for_user(attachments: List[Dict[str, Any]], user: User) -> List[Dict[str, Any]]:
     """
-    Option 1: Secure Backend Stream Gateway.
-    Evaluates current user's permissions and generates server-side streaming URLs
-    that securely access Ironclad attachments using the server-side OAuth2 Bearer token.
+    Evaluates current user's permissions and passes direct Ironclad attachment links
+    without modifying them, only if user possesses permissions.
     """
     user_perms = set(user.permissions or [])
-    is_admin = user.role == "admin"
+    is_admin = user.role == "admin" or "admin" in user_perms
     can_view = is_admin or bool(user_perms.intersection({"contracts:view", "view", "read", "contracts:download", "download"}))
     can_download = is_admin or bool(user_perms.intersection({"contracts:download", "download"}))
 
     filtered = []
     for att in attachments:
         item = dict(att)
-        key = str(item.get("key") or item.get("id"))
-        ironclad_href = item.get("href") or item.get("url") or ""
-
-        stream_view_url = f"/api/v1/contracts/{record_id}/attachments/{key}/stream?download=false"
-        stream_download_url = f"/api/v1/contracts/{record_id}/attachments/{key}/stream?download=true"
+        # Preserve the exact, unmodified link returned from the Ironclad API
+        direct_link = item.get("href") or item.get("url") or item.get("view_url") or item.get("download_url") or ""
 
         item["can_view"] = can_view
         item["can_download"] = can_download
-        item["href"] = ironclad_href
+        item["href"] = direct_link if (can_view or can_download) else None
 
         if can_view:
-            item["view_url"] = stream_view_url
-            item["url"] = stream_view_url
+            item["view_url"] = direct_link
+            item["url"] = direct_link
         else:
             item["view_url"] = None
             item["url"] = None
 
         if can_download:
-            item["download_url"] = stream_download_url
+            item["download_url"] = direct_link
         else:
             item["download_url"] = None
 
@@ -64,18 +60,32 @@ async def list_allowed_contracts(
 ):
     """
     Fetches live records directly from Ironclad API (GET /records/ids & GET /records/{id}).
-    Strictly filters for the 3 whitelisted record types:
-      - Property Service Contract (BH) / propertyServiceContractBh
-      - Purchase & Sale Agreement (BH) / purchaseSaleAgreementBh
-      - General Services Agreement (BH) / generalServicesAgreementBh
-    No contracts are stored in the database.
+    Strictly filters for the authorized record types based on user roles and permissions.
+    Only permitted types are queried from the external Ironclad API.
     """
-    contracts = await ironclad_service.fetch_allowed_contracts(search=search, user_email=current_user.email)
+    allowed_types = get_user_allowed_record_types(current_user)
+    if not allowed_types:
+        return []
 
-    # Apply in-memory filters if specified
+    # Check if a specific record_type was requested in the filter
+    effective_types = allowed_types
+    if record_type and record_type != "All Types":
+        matched = any(
+            t == record_type or TYPE_DISPLAY_NAMES.get(t) == record_type
+            for t in allowed_types
+        )
+        if not matched:
+            return []
+        effective_types = [t for t in allowed_types if t == record_type or TYPE_DISPLAY_NAMES.get(t) == record_type]
+
+    contracts = await ironclad_service.fetch_allowed_contracts(
+        search=search,
+        user_email=current_user.email,
+        record_types=effective_types
+    )
+
+    # Apply in-memory status and text search filters if specified
     filtered = contracts
-    if record_type:
-        filtered = [c for c in filtered if c.get("record_type") == record_type or c.get("type") == record_type or c.get("type_display_name") == record_type]
     if status:
         filtered = [c for c in filtered if c.get("status") == status]
     if search:
@@ -90,9 +100,9 @@ async def list_allowed_contracts(
             or s in c.get("community_name", "").lower()
         ]
 
-    # Server-side attachment permission filter
+    # Attach permissions and direct unmodified links
     for c in filtered:
-        c["attachments"] = filter_attachments_for_user(c.get("attachments", []), c["id"], current_user)
+        c["attachments"] = filter_attachments_for_user(c.get("attachments", []), current_user)
         c["permissions"] = {
             "can_view_attachments": any(a.get("can_view") for a in c["attachments"]) if c["attachments"] else True,
             "can_download_attachments": any(a.get("can_download") for a in c["attachments"]) if c["attachments"] else False
@@ -106,9 +116,15 @@ async def list_record_ids(
 ):
     """
     Fetches raw record IDs directly from Ironclad Public API: GET /records/ids?types=...
-    OAuth Scope: public.records.readRecords
+    Only permitted types are sent to the external API based on user role and permissions.
     """
-    return await ironclad_service.fetch_record_ids(user_email=current_user.email)
+    allowed_types = get_user_allowed_record_types(current_user)
+    if not allowed_types:
+        return []
+    return await ironclad_service.fetch_record_ids(
+        user_email=current_user.email,
+        record_types=allowed_types
+    )
 
 @router.get("/notifications/check", response_model=List[ContractNotificationItem])
 async def check_new_contracts_notifications(
@@ -123,17 +139,38 @@ async def get_bi_analytics(
     search: Optional[str] = Query(None, description="Filter metrics by search query"),
     current_user: User = Depends(require_permission("contracts:view"))
 ):
+    allowed_types = get_user_allowed_record_types(current_user)
+    if not allowed_types:
+        return BiMetricsResponse(
+            total_portfolio_value=0.0,
+            total_contracts_count=0,
+            active_contracts_count=0,
+            signed_contracts_count=0,
+            pending_review_count=0,
+            avg_turnaround_days=0.0,
+            status_distribution={},
+            counterparty_exposure=[],
+            monthly_trends=[],
+            department_distribution={},
+            record_type_distribution={}
+        )
+
+    effective_types = allowed_types
+    if record_type and record_type != "All Types":
+        matched = any(
+            t == record_type or TYPE_DISPLAY_NAMES.get(t) == record_type
+            for t in allowed_types
+        )
+        if not matched:
+            effective_types = []
+        else:
+            effective_types = [t for t in allowed_types if t == record_type or TYPE_DISPLAY_NAMES.get(t) == record_type]
+
     contracts = await ironclad_service.fetch_allowed_contracts(
         search=search,
-        user_email=current_user.email
+        user_email=current_user.email,
+        record_types=effective_types
     )
-    if record_type and record_type != "All Types":
-        contracts = [
-            c for c in contracts
-            if c.get("record_type") == record_type
-            or c.get("type") == record_type
-            or c.get("type_display_name") == record_type
-        ]
     total_val = sum(c.get("contract_value", 0.0) for c in contracts)
     total_count = len(contracts)
     signed_count = sum(1 for c in contracts if c.get("status") in ["signed", "completed", "active"])
@@ -194,7 +231,7 @@ async def get_contract_detail(
     """
     Retrieves full details for a single Ironclad Record: GET /records/{id}.
     OAuth Scope: public.records.readRecords
-    Uses the direct Ironclad attachment link.
+    Uses the direct unmodified Ironclad attachment link based on user permissions.
     """
     record = await ironclad_service.fetch_record_by_id(record_id, user_email=current_user.email)
     if not record:
@@ -203,14 +240,24 @@ async def get_contract_detail(
             detail=f"Ironclad Record with ID '{record_id}' not found."
         )
 
-    if record.get("type") not in ALLOWED_RECORD_TYPES and record.get("record_type") not in ALLOWED_RECORD_TYPES:
+    # Validate that the record's type is authorized for the user
+    allowed_types = get_user_allowed_record_types(current_user)
+    rec_type = record.get("type")
+    rec_record_type = record.get("record_type")
+    rec_display_name = record.get("type_display_name")
+
+    is_type_allowed = any(
+        t in (rec_type, rec_record_type, rec_display_name) or TYPE_DISPLAY_NAMES.get(t) in (rec_type, rec_record_type, rec_display_name)
+        for t in allowed_types
+    )
+    if not is_type_allowed:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Access Denied: Record type '{record.get('type')}' is not authorized."
+            detail=f"Access Denied: You do not have permission to view contracts of type '{rec_display_name or rec_type}'."
         )
 
     user_perms = set(current_user.permissions or [])
-    is_admin = current_user.role == "admin"
+    is_admin = current_user.role == "admin" or "admin" in user_perms
     can_view = is_admin or bool(user_perms.intersection({"contracts:view", "view", "read", "contracts:download", "download"}))
     can_download = is_admin or bool(user_perms.intersection({"contracts:download", "download"}))
 
@@ -218,7 +265,7 @@ async def get_contract_detail(
         "can_view_attachments": can_view,
         "can_download_attachments": can_download
     }
-    record["attachments"] = filter_attachments_for_user(record.get("attachments", []), record["id"], current_user)
+    record["attachments"] = filter_attachments_for_user(record.get("attachments", []), current_user)
 
     return record
 @router.get("/{record_id}/attachments/{attachment_key}/stream")

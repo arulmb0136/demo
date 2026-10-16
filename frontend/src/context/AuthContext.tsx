@@ -17,12 +17,15 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const PERMISSION_ALIASES: Record<string, string[]> = {
-  'contracts:view': ['contracts:view', 'read', 'view'],
-  'contracts:download': ['contracts:download', 'download'],
+  'contracts:view': ['contracts:view', 'read', 'view', 'admin'],
+  'contracts:view:property_service': ['contracts:view:property_service', 'contracts:view:propertyServiceContractBh', 'Property Service Contract', 'admin'],
+  'contracts:view:purchase_sale': ['contracts:view:purchase_sale', 'contracts:view:purchaseSaleAgreementBh', 'Purchase & Sales Agreement', 'admin'],
+  'contracts:view:general_services': ['contracts:view:general_services', 'contracts:view:generalServicesAgreementBh', 'General Services Agreement', 'admin'],
+  'contracts:download': ['contracts:download', 'download', 'admin'],
   'users:manage': ['users:manage', 'admin'],
   'roles:manage': ['roles:manage', 'admin'],
-  'read': ['read', 'contracts:view', 'view'],
-  'download': ['download', 'contracts:download'],
+  'read': ['read', 'contracts:view', 'view', 'admin'],
+  'download': ['download', 'contracts:download', 'admin'],
   'admin': ['admin', 'users:manage', 'roles:manage']
 };
 

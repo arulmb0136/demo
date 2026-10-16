@@ -11,8 +11,11 @@ from app.services.user_service import UserService
 router = APIRouter(prefix="/roles", tags=["Role-Based Access Control"])
 
 AVAILABLE_PERMISSIONS = [
-    {"key": "contracts:view", "label": "View Contracts", "description": "Permission to view contract IDs, summary cards, and agreement details"},
-    {"key": "contracts:download", "label": "Download Documents", "description": "Permission to view and download binary document attachments from Ironclad"},
+    {"key": "contracts:view", "label": "View Contracts (General)", "description": "Base access to view contracts dashboard and general summary"},
+    {"key": "contracts:view:property_service", "label": "View Property Service Contracts", "description": "Permission to view Property Service Contract (BH) records"},
+    {"key": "contracts:view:purchase_sale", "label": "View Purchase & Sale Agreements", "description": "Permission to view Purchase & Sale Agreement (BH) records"},
+    {"key": "contracts:view:general_services", "label": "View General Services Agreements", "description": "Permission to view General Services Agreement (BH) records"},
+    {"key": "contracts:download", "label": "Download Documents", "description": "Permission to download binary document attachments from Ironclad"},
     {"key": "users:manage", "label": "Manage Users", "description": "Permission to add new users and modify existing user profiles"},
     {"key": "roles:manage", "label": "Manage Roles", "description": "Permission to add new roles and update role permission policies"}
 ]

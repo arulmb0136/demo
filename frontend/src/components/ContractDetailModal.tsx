@@ -64,23 +64,17 @@ export const ContractDetailModal: React.FC<ContractDetailModalProps> = ({
   const canView = current.permissions?.can_view_attachments ?? hasPermission('contracts:view');
   const canDownload = current.permissions?.can_download_attachments ?? hasPermission('contracts:download');
 
-  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
-  const token = localStorage.getItem('ironclad_token') || '';
-
   const handleViewDocument = (att: ContractAttachment) => {
     if (!canView || !att.view_url) return;
-    const rawUrl = att.view_url.startsWith('http') ? att.view_url : `${API_BASE_URL}${att.view_url}`;
-    const url = token ? `${rawUrl}${rawUrl.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}` : rawUrl;
-    window.open(url, '_blank');
+    window.open(att.view_url, '_blank');
   };
 
   const handleDownloadDocument = (att: ContractAttachment) => {
     if (!canDownload || !att.download_url) return;
-    const rawUrl = att.download_url.startsWith('http') ? att.download_url : `${API_BASE_URL}${att.download_url}`;
-    const url = token ? `${rawUrl}${rawUrl.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}` : rawUrl;
     const link = document.createElement('a');
-    link.href = url;
+    link.href = att.download_url;
     link.download = att.filename || att.name;
+    link.target = '_blank';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);

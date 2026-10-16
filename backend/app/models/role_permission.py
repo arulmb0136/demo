@@ -16,24 +16,36 @@ DEFAULT_ROLES_SEED: List[Dict] = [
         "role_key": "admin",
         "display_name": "Administrator",
         "description": "Full platform administration, user management, and role authorization control",
-        "default_permissions": ["contracts:view", "contracts:download", "users:manage", "roles:manage", "read", "download", "admin"]
+        "default_permissions": [
+            "contracts:view", "contracts:view:property_service", "contracts:view:purchase_sale", "contracts:view:general_services",
+            "contracts:download", "users:manage", "roles:manage", "read", "download", "admin"
+        ]
     },
     {
         "role_key": "manager",
         "display_name": "Operations Manager",
         "description": "Full access to view all agreement records and download document attachments",
-        "default_permissions": ["contracts:view", "contracts:download", "read", "download"]
+        "default_permissions": [
+            "contracts:view", "contracts:view:property_service", "contracts:view:purchase_sale", "contracts:view:general_services",
+            "contracts:download", "read", "download"
+        ]
     },
     {
         "role_key": "editor",
         "display_name": "Legal Counsel / Specialist",
         "description": "Authorized to view agreements and download documents",
-        "default_permissions": ["contracts:view", "contracts:download", "read", "download"]
+        "default_permissions": [
+            "contracts:view", "contracts:view:property_service", "contracts:view:purchase_sale", "contracts:view:general_services",
+            "contracts:download", "read", "download"
+        ]
     },
     {
         "role_key": "viewer",
         "display_name": "Auditor / Read-Only Viewer",
         "description": "Read-only access to view contract records and details. Document downloads restricted.",
-        "default_permissions": ["contracts:view", "read"]
+        "default_permissions": [
+            "contracts:view", "contracts:view:property_service", "contracts:view:purchase_sale", "contracts:view:general_services",
+            "read"
+        ]
     }
 ]

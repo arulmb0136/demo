@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ContractAttachment } from '../types';
 import { SecurePdfViewer } from './SecurePdfViewer';
 import {
@@ -28,6 +28,26 @@ export const AttachmentViewerModal: React.FC<AttachmentViewerModalProps> = ({
   canDownload = true,
 }) => {
   const [isFullscreen, setIsFullscreen] = useState(false);
+
+  // Global print & save shortcut interception (Ctrl+P / Cmd+P / Ctrl+S / Cmd+S)
+  useEffect(() => {
+    if (!isOpen || canDownload) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const isModifier = e.ctrlKey || e.metaKey;
+      const key = e.key.toLowerCase();
+      if (isModifier && (key === 'p' || key === 's')) {
+        e.preventDefault();
+        e.stopPropagation();
+        return false;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown, true);
+    };
+  }, [isOpen, canDownload]);
 
   if (!isOpen || !attachment) return null;
 
@@ -67,6 +87,11 @@ export const AttachmentViewerModal: React.FC<AttachmentViewerModalProps> = ({
 
   return (
     <div
+      onContextMenu={(e) => {
+        if (!canDownload) {
+          e.preventDefault();
+        }
+      }}
       style={{
         position: 'fixed',
         inset: 0,

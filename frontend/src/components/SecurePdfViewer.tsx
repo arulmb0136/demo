@@ -98,6 +98,26 @@ export const SecurePdfViewer: React.FC<SecurePdfViewerProps> = ({
     };
   }, [url, token]);
 
+  // Block Ctrl+P / Cmd+P (Print) and Ctrl+S / Cmd+S (Save) when download/print is restricted
+  useEffect(() => {
+    if (canDownload) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const isModifier = e.ctrlKey || e.metaKey;
+      const key = e.key.toLowerCase();
+      if (isModifier && (key === 'p' || key === 's')) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        return false;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown, true);
+    };
+  }, [canDownload]);
+
   // Render the current page onto the HTML5 Canvas
   useEffect(() => {
     if (!pdfDoc || !canvasRef.current) return;
@@ -194,6 +214,34 @@ export const SecurePdfViewer: React.FC<SecurePdfViewerProps> = ({
         userSelect: canDownload ? 'auto' : 'none',
       }}
     >
+      {/* CSS Print Blocker: Blanks out document if browser print dialog is triggered */}
+      {!canDownload && (
+        <style>
+          {`
+            @media print {
+              body * {
+                visibility: hidden !important;
+                display: none !important;
+              }
+              body::after {
+                content: "Printing is restricted for this document by organization policy.";
+                visibility: visible !important;
+                display: block !important;
+                position: absolute !important;
+                top: 40% !important;
+                left: 0 !important;
+                right: 0 !important;
+                text-align: center !important;
+                font-size: 20pt !important;
+                font-family: sans-serif !important;
+                font-weight: 700 !important;
+                color: #000000 !important;
+              }
+            }
+          `}
+        </style>
+      )}
+
       {/* Secure Navigation & Zoom Toolbar */}
       <div
         style={{
